@@ -1,0 +1,64 @@
+# TenyoJubaku Configuration Template
+# Copy this file to config.yaml and fill in your actual values
+# NEVER commit config.yaml to version control!
+
+# OKX API Configuration
+okx:
+  # API endpoint (production or demo)
+  api_url: "https://www.okx.com"
+
+  # Your OKX API credentials
+  # Get these from: OKX Account > API Management
+  # Required permissions: Read (trading permissions NOT required for monitoring)
+  api_key: "your-api-key-here"
+  api_secret: "your-api-secret-here"
+  passphrase: "your-api-passphrase-here"
+
+  # Request timeout in seconds
+  timeout: 30
+
+  # Maximum retry attempts for failed requests
+  max_retries: 3
+
+# Monitoring Configuration
+monitoring:
+  # Monitoring interval in seconds (how often to fetch account data)
+  interval: 60
+
+  # Enable monitoring on startup
+  enabled: true
+
+# Database Configuration
+database:
+  # Path to SQLite database file
+  path: "./data/tenyojubaku.db"
+
+  # Enable Write-Ahead Logging (WAL) mode for better concurrency
+  wal_mode: true
+
+  # Connection pool settings
+  max_open_conns: 1
+  max_idle_conns: 1
+
+# Logging Configuration
+logging:
+  # Log file path
+  file_path: "./logs/app.log"
+
+  # Log level: DEBUG, INFO, WARN, ERROR
+  level: "INFO"
+
+  # Maximum log file size in MB before rotation
+  max_size: 100
+
+  # Maximum number of days to retain old log files
+  max_age: 30
+
+  # Maximum number of old log files to keep
+  max_backups: 10
+
+  # Compress rotated log files
+  compress: true
+
+  # Log to console in addition to file
+  console: true
