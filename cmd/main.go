@@ -11,6 +11,7 @@ import (
 	"github.com/wTHU1Ew/TenyoJubaku/internal/monitor"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/okx"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/storage"
+	"github.com/wTHU1Ew/TenyoJubaku/internal/tpsl"
 )
 
 func main() {
@@ -74,6 +75,9 @@ func main() {
 
 	// Initialize OKX API client
 	log.Info("Initializing OKX API client")
+	if cfg.OKX.DebugEnable {
+		log.Info("OKX API debug mode enabled - API responses will be printed to console")
+	}
 	okxClient := okx.New(
 		cfg.OKX.APIURL,
 		cfg.OKX.APIKey,
@@ -81,6 +85,7 @@ func main() {
 		cfg.OKX.Passphrase,
 		cfg.OKX.Timeout,
 		cfg.OKX.MaxRetries,
+		cfg.OKX.DebugEnable,
 	)
 
 	// Initialize monitoring service
@@ -91,6 +96,15 @@ func main() {
 		log,
 		cfg.Monitoring.Interval,
 	)
+
+	// Initialize TPSL scheduler if enabled
+	var tpslScheduler *tpsl.Scheduler
+	if cfg.TPSL.Enabled {
+		log.Info("Initializing TPSL scheduler")
+		tpslScheduler = tpsl.NewScheduler(&cfg.TPSL, db, okxClient, log)
+	} else {
+		log.Info("TPSL management disabled in configuration")
+	}
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -104,11 +118,21 @@ func main() {
 		}
 	}()
 
+	// Start TPSL scheduler if enabled
+	if tpslScheduler != nil {
+		tpslScheduler.Start()
+	}
+
 	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigChan:
 		log.Info("Received signal: %v", sig)
 		log.Info("Initiating graceful shutdown...")
+
+		// Stop TPSL scheduler if running
+		if tpslScheduler != nil {
+			tpslScheduler.Stop()
+		}
 
 		// Stop monitoring service
 		monitorService.Stop()

@@ -14,16 +14,18 @@ type Config struct {
 	Monitoring MonitoringConfig `yaml:"monitoring"`
 	Database   DatabaseConfig   `yaml:"database"`
 	Logging    LoggingConfig    `yaml:"logging"`
+	TPSL       TPSLConfig       `yaml:"tpsl"`
 }
 
 // OKXConfig OKX API配置 / OKX API configuration
 type OKXConfig struct {
-	APIURL     string `yaml:"api_url"`
-	APIKey     string `yaml:"api_key"`
-	APISecret  string `yaml:"api_secret"`
-	Passphrase string `yaml:"passphrase"`
-	Timeout    int    `yaml:"timeout"`
-	MaxRetries int    `yaml:"max_retries"`
+	APIURL      string `yaml:"api_url"`
+	APIKey      string `yaml:"api_key"`
+	APISecret   string `yaml:"api_secret"`
+	Passphrase  string `yaml:"passphrase"`
+	Timeout     int    `yaml:"timeout"`
+	MaxRetries  int    `yaml:"max_retries"`
+	DebugEnable bool   `yaml:"debug_enable"`
 }
 
 // MonitoringConfig 监控配置 / Monitoring configuration
@@ -49,6 +51,14 @@ type LoggingConfig struct {
 	MaxBackups int    `yaml:"max_backups"`
 	Compress   bool   `yaml:"compress"`
 	Console    bool   `yaml:"console"`
+}
+
+// TPSLConfig TPSL管理配置 / TPSL management configuration
+type TPSLConfig struct {
+	Enabled         bool    `yaml:"enabled"`
+	CheckInterval   int     `yaml:"check_interval"`
+	VolatilityPct   float64 `yaml:"volatility_pct"`
+	ProfitLossRatio float64 `yaml:"profit_loss_ratio"`
 }
 
 // Load 加载配置文件 / Load configuration from file
@@ -158,6 +168,29 @@ func (c *Config) Validate() error {
 	}
 	if c.Logging.MaxBackups < 0 {
 		c.Logging.MaxBackups = 10
+	}
+
+	// Validate TPSL configuration
+	// Set defaults if not specified
+	if c.TPSL.CheckInterval <= 0 {
+		c.TPSL.CheckInterval = 300 // Default 5 minutes
+	}
+	if c.TPSL.VolatilityPct == 0 {
+		c.TPSL.VolatilityPct = 0.01 // Default 1%
+	}
+	if c.TPSL.ProfitLossRatio == 0 {
+		c.TPSL.ProfitLossRatio = 5.0 // Default 5:1
+	}
+
+	// Validate TPSL parameters
+	if c.TPSL.VolatilityPct <= 0 || c.TPSL.VolatilityPct > 1.0 {
+		return fmt.Errorf("tpsl.volatility_pct must be between 0 and 1, got %f", c.TPSL.VolatilityPct)
+	}
+	if c.TPSL.ProfitLossRatio <= 0 {
+		return fmt.Errorf("tpsl.profit_loss_ratio must be positive, got %f", c.TPSL.ProfitLossRatio)
+	}
+	if c.TPSL.CheckInterval <= 0 {
+		return fmt.Errorf("tpsl.check_interval must be positive, got %d", c.TPSL.CheckInterval)
 	}
 
 	return nil

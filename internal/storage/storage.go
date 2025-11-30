@@ -229,8 +229,8 @@ func (s *Storage) GetLatestAccountBalances() ([]models.AccountBalance, error) {
 			return nil, fmt.Errorf("failed to scan balance: %w", err)
 		}
 
-		// Parse timestamp
-		b.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestamp)
+		// Parse timestamp (SQLite stores in RFC3339 format)
+		b.Timestamp, err = time.Parse(time.RFC3339, timestamp)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 		}
@@ -268,8 +268,8 @@ func (s *Storage) GetLatestPositions() ([]models.Position, error) {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
 
-		// Parse timestamp
-		p.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestamp)
+		// Parse timestamp (SQLite stores in RFC3339 format)
+		p.Timestamp, err = time.Parse(time.RFC3339, timestamp)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 		}
@@ -307,8 +307,8 @@ func (s *Storage) GetAccountBalancesByTimeRange(currency string, startTime, endT
 			return nil, fmt.Errorf("failed to scan balance: %w", err)
 		}
 
-		// Parse timestamp
-		b.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestamp)
+		// Parse timestamp (SQLite stores in RFC3339 format)
+		b.Timestamp, err = time.Parse(time.RFC3339, timestamp)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 		}

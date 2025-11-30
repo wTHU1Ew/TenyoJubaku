@@ -9,7 +9,7 @@ I need to design a complete trading system called TenyoJubaku (derived from the 
 
 1. Real-time monitoring and recording of trading account funds and position information (funds need to be stored in a database, as records are read approximately every minute, which is relatively frequent).
 
-2. Automatically adding/completing stop-loss and take-profit orders if the position doesn't have set stop-loss and take-profit levels, or if the stop-loss/take-profit amount doesn't cover the entire position amount. The default stop-loss is set via a configuration file and is 1% of the volatility (not considering leverage; for 5x leverage, it's a 5% position loss stop-loss, and so on). The default take-profit is calculated based on the profit-loss ratio, which is also set through the configuration file. The default profit-loss ratio is 5:1 (without considering leverage; if the stop-loss is 1%, the profit-loss ratio is 5; with 5x leverage, it's 25% of the position for take-profit, and so on).
+2. If no stop-loss or take-profit level is set for the position, or if the stop-loss/take-profit amount is insufficient to cover the entire position, stop-loss and take-profit orders will be automatically added/completed. The default stop-loss level is set via configuration file and is 1% of volatility (for a long position, this means a 1% drop in the opening price is set as the stop-loss). The default take-profit level is calculated based on the risk-reward ratio, which is also set via configuration file. The default risk-reward ratio is 5:1 (for a long position, this means a 5% increase in the opening price is set as the take-profit).
 
 3. Order frequency limit, modified through the configuration file, defaults to a maximum of 5 orders per week. Market trading is prohibited; the trader is only allowed to act as a maker, not a taker (unless it's for take-profit, in which case partial position is allowed, with a default maximum of 50% for takers). When maker, the price difference must be at least 1% different from the market price (default configuration) to avoid FOMO (Fear of Missing Out). Multiple order confirmations are required; even if the order is successfully placed, a confirmation notification is sent every 12 hours, with a 4-hour waiting time. If the timeout occurs, the order amount is modified to 50% of the current amount (all configuration items).
 
@@ -27,6 +27,8 @@ Next Year Features:
 - Golang
 - you can use any database, prefer lightweight ones like SQLite or similar
 - you can use any script language if needed, but prefer python
+- don't use any third-party paid services
+- avoid direct database operations in Go; use ORM libraries instead
 
 ## Project Conventions
 

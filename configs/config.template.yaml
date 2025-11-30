@@ -20,6 +20,11 @@ okx:
   # Maximum retry attempts for failed requests
   max_retries: 3
 
+  # Enable debug mode to print all OKX API requests and responses to console
+  # This is useful for troubleshooting API issues
+  # WARNING: Sensitive data (API keys) are NOT masked in debug output
+  debug_enable: false
+
 # Monitoring Configuration
 monitoring:
   # Monitoring interval in seconds (how often to fetch account data)
@@ -62,3 +67,29 @@ logging:
 
   # Log to console in addition to file
   console: true
+
+# TPSL Management Configuration
+tpsl:
+  # Enable automatic TPSL management
+  # When enabled, the system will automatically place stop-loss and take-profit orders
+  # for positions that don't have adequate TPSL coverage
+  enabled: true
+
+  # TPSL check interval in seconds (how often to check positions and place orders)
+  # Default: 300 seconds (5 minutes)
+  # Lower values = faster response but more API calls
+  # Higher values = slower response but fewer API calls
+  check_interval: 300
+
+  # Volatility percentage for stop-loss calculation (e.g., 0.01 = 1%)
+  # This is the base risk percentage before leverage adjustment
+  # Formula: SL_distance = entry_price × volatility_pct × leverage
+  # Example: For 1% volatility with 5x leverage, actual position loss at SL is 5%
+  # Default: 0.01 (1%)
+  volatility_pct: 0.01
+
+  # Profit-loss ratio for take-profit calculation (e.g., 5.0 = 5:1 ratio)
+  # Take-profit distance is stop-loss distance multiplied by this ratio
+  # Example: If SL is 1%, TP will be 5% (with 5:1 ratio)
+  # Default: 5.0 (5:1 ratio)
+  profit_loss_ratio: 5.0

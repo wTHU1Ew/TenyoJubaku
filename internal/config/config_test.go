@@ -131,6 +131,12 @@ func TestConfigValidate(t *testing.T) {
 					Timeout:    30,
 					MaxRetries: 3,
 				},
+				TPSL: TPSLConfig{
+					Enabled:         true,
+					CheckInterval:   300,
+					VolatilityPct:   0.01,
+					ProfitLossRatio: 5.0,
+				},
 			},
 			expectError: false,
 		},
@@ -156,6 +162,67 @@ func TestConfigValidate(t *testing.T) {
 					Passphrase: "valid-passphrase",
 					// Timeout and MaxRetries not set
 				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid volatility_pct too high",
+			config: Config{
+				OKX: OKXConfig{
+					APIURL:     "https://www.okx.com",
+					APIKey:     "valid-key",
+					APISecret:  "valid-secret",
+					Passphrase: "valid-passphrase",
+				},
+				TPSL: TPSLConfig{
+					VolatilityPct: 1.5, // > 1.0
+				},
+			},
+			expectError: true,
+			errorMsg:    "volatility_pct must be between 0 and 1",
+		},
+		{
+			name: "invalid volatility_pct negative",
+			config: Config{
+				OKX: OKXConfig{
+					APIURL:     "https://www.okx.com",
+					APIKey:     "valid-key",
+					APISecret:  "valid-secret",
+					Passphrase: "valid-passphrase",
+				},
+				TPSL: TPSLConfig{
+					VolatilityPct: -0.01,
+				},
+			},
+			expectError: true,
+			errorMsg:    "volatility_pct must be between 0 and 1",
+		},
+		{
+			name: "invalid profit_loss_ratio negative",
+			config: Config{
+				OKX: OKXConfig{
+					APIURL:     "https://www.okx.com",
+					APIKey:     "valid-key",
+					APISecret:  "valid-secret",
+					Passphrase: "valid-passphrase",
+				},
+				TPSL: TPSLConfig{
+					ProfitLossRatio: -5.0,
+				},
+			},
+			expectError: true,
+			errorMsg:    "profit_loss_ratio must be positive",
+		},
+		{
+			name: "TPSL defaults applied",
+			config: Config{
+				OKX: OKXConfig{
+					APIURL:     "https://www.okx.com",
+					APIKey:     "valid-key",
+					APISecret:  "valid-secret",
+					Passphrase: "valid-passphrase",
+				},
+				// TPSL not set - should use defaults
 			},
 			expectError: false,
 		},

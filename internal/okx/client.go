@@ -8,17 +8,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // Client OKX API客户端 / OKX API client
 type Client struct {
-	apiURL     string
-	apiKey     string
-	apiSecret  string
-	passphrase string
-	httpClient *http.Client
-	maxRetries int
+	apiURL      string
+	apiKey      string
+	apiSecret   string
+	passphrase  string
+	httpClient  *http.Client
+	maxRetries  int
+	debugEnable bool
 }
 
 // New 创建新的OKX客户端 / Create new OKX client
@@ -32,19 +34,21 @@ type Client struct {
 //   - passphrase: API passphrase set during key creation
 //   - timeout: HTTP request timeout in seconds
 //   - maxRetries: Maximum retry attempts on request failure
+//   - debugEnable: Whether to print API responses for debugging
 //
 // Returns:
 //   - *Client: 配置完成的OKX客户端实例 / Configured OKX client instance ready for API calls
-func New(apiURL, apiKey, apiSecret, passphrase string, timeout, maxRetries int) *Client {
+func New(apiURL, apiKey, apiSecret, passphrase string, timeout, maxRetries int, debugEnable bool) *Client {
 	return &Client{
-		apiURL:     apiURL,
-		apiKey:     apiKey,
-		apiSecret:  apiSecret,
-		passphrase: passphrase,
-		httpClient: &http.Client{
+		apiURL:      apiURL,
+		apiKey:      apiKey,
+		apiSecret:   apiSecret,
+		passphrase:  passphrase,
+		httpClient:  &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 		},
-		maxRetries: maxRetries,
+		maxRetries:  maxRetries,
+		debugEnable: debugEnable,
 	}
 }
 
@@ -108,8 +112,23 @@ func (c *Client) generateSignature(timestamp, method, requestPath, body string) 
 //   - error: 请求失败时返回错误（所有重试均失败后）/ Error on request failure (after all retries exhausted)
 //     包含最后一次失败的具体原因 / Contains reason for the last failure
 func (c *Client) doRequest(method, path string) ([]byte, error) {
+	return c.doRequestWithBody(method, path, "")
+}
+
+// doRequestWithBody 执行带请求体的HTTP请求 / Execute HTTP request with body
+// 支持POST请求，包含JSON请求体的签名认证
+// Support POST requests with JSON body and signature authentication
+//
+// Parameters:
+//   - method: HTTP method ("GET", "POST", etc.)
+//   - path: API endpoint path (e.g., "/api/v5/trade/order-algo")
+//   - body: 请求体内容（JSON字符串）/ Request body content (JSON string)
+//
+// Returns:
+//   - []byte: API响应的原始字节数据 / Raw byte data from API response
+//   - error: 请求失败时返回错误（所有重试均失败后）/ Error on request failure (after all retries exhausted)
+func (c *Client) doRequestWithBody(method, path, body string) ([]byte, error) {
 	url := c.apiURL + path
-	body := "" // GET requests have empty body
 
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
@@ -126,7 +145,11 @@ func (c *Client) doRequest(method, path string) ([]byte, error) {
 		signature := c.generateSignature(timestamp, method, path, body)
 
 		// Create HTTP request
-		req, err := http.NewRequest(method, url, nil)
+		var reqBody io.Reader
+		if body != "" {
+			reqBody = strings.NewReader(body)
+		}
+		req, err := http.NewRequest(method, url, reqBody)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to create request: %w", err)
 			continue
@@ -152,6 +175,18 @@ func (c *Client) doRequest(method, path string) ([]byte, error) {
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response body: %w", err)
 			continue
+		}
+
+		// Debug: print API response if enabled
+		if c.debugEnable {
+			fmt.Printf("\n=== OKX API Debug ===\n")
+			fmt.Printf("Request: %s %s\n", method, path)
+			if body != "" {
+				fmt.Printf("Request Body: %s\n", body)
+			}
+			fmt.Printf("Status Code: %d\n", resp.StatusCode)
+			fmt.Printf("Response Body: %s\n", string(respBody))
+			fmt.Printf("=====================\n\n")
 		}
 
 		// Check status code
@@ -251,4 +286,90 @@ func (c *Client) GetPositions() (*PositionsResponse, error) {
 func (c *Client) HealthCheck() error {
 	_, err := c.GetAccountBalance()
 	return err
+}
+
+// GetPendingAlgoOrders 获取待处理算法订单 / Get pending algo orders
+// 从OKX API获取待处理的算法订单（如条件单、止盈止损单等）
+// Fetch pending algo orders from OKX API (e.g., conditional orders, TPSL orders, etc.)
+//
+// Parameters:
+//   - ordType: 订单类型 / Order type, e.g., "conditional" for TPSL orders
+//     可选值 / Valid values: "conditional", "oco", "trigger", "move_order_stop", etc.
+//
+// Returns:
+//   - *PendingAlgoOrdersResponse: 待处理算法订单响应对象 / Pending algo orders response object
+//     包含Data字段，数组中每个元素代表一个待处理的算法订单
+//     Contains Data field with array of pending algo orders
+//   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
+//     可能原因包括: 网络错误、认证失败、API错误码非"0"
+//     Possible causes: network error, authentication failure, API error code not "0"
+func (c *Client) GetPendingAlgoOrders(ordType string) (*PendingAlgoOrdersResponse, error) {
+	path := "/api/v5/trade/orders-algo-pending?ordType=" + ordType
+
+	respBody, err := c.doRequest("GET", path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var resp PendingAlgoOrdersResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Check for API error
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}
+
+// PlaceAlgoOrder 下单算法订单 / Place algo order
+// 向OKX API下单算法订单（如条件单、止盈止损单等）
+// Place algo order to OKX API (e.g., conditional orders, TPSL orders, etc.)
+//
+// Parameters:
+//   - req: 算法订单请求对象 / Algo order request object
+//     包含订单参数（交易对、订单类型、止盈止损价格等）
+//     Contains order parameters (instrument, order type, TPSL prices, etc.)
+//
+// Returns:
+//   - *AlgoOrderResponse: 算法订单响应对象 / Algo order response object
+//     包含Data字段，其中包含algoId（订单ID）
+//     Contains Data field with algoId (order ID)
+//   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
+//     可能原因包括: 网络错误、认证失败、API错误码非"0"、参数错误
+//     Possible causes: network error, authentication failure, API error code not "0", invalid parameters
+func (c *Client) PlaceAlgoOrder(req AlgoOrderRequest) (*AlgoOrderResponse, error) {
+	path := "/api/v5/trade/order-algo"
+
+	// Marshal request to JSON
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	respBody, err := c.doRequestWithBody("POST", path, string(reqBody))
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var resp AlgoOrderResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Check for API error
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	// Check for order-specific errors
+	if len(resp.Data) > 0 && resp.Data[0].SCode != "" && resp.Data[0].SCode != "0" {
+		return nil, fmt.Errorf("order placement error: code=%s, msg=%s", resp.Data[0].SCode, resp.Data[0].SMsg)
+	}
+
+	return &resp, nil
 }
