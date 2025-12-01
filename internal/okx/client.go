@@ -373,3 +373,39 @@ func (c *Client) PlaceAlgoOrder(req AlgoOrderRequest) (*AlgoOrderResponse, error
 
 	return &resp, nil
 }
+
+// GetTicker 获取行情数据 / Get ticker data
+// 从OKX API获取指定交易对的行情数据，包含最新成交价、买卖价等
+// Fetch ticker data for specified instrument from OKX API, including last price, bid/ask prices, etc.
+//
+// Parameters:
+//   - instId: 交易对ID / Instrument ID (e.g., "BTC-USDT-SWAP")
+//
+// Returns:
+//   - *TickerResponse: 行情响应对象 / Ticker response object
+//     包含Data字段，其中包含最新价格、买卖价等信息
+//     Contains Data field with last price, bid/ask prices, etc.
+//   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
+//     可能原因包括: 网络错误、认证失败、API错误码非"0"、交易对不存在
+//     Possible causes: network error, authentication failure, API error code not "0", invalid instrument
+func (c *Client) GetTicker(instId string) (*TickerResponse, error) {
+	path := fmt.Sprintf("/api/v5/market/ticker?instId=%s", instId)
+
+	respBody, err := c.doRequest("GET", path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var resp TickerResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Check for API error
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}

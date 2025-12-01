@@ -82,14 +82,21 @@ tpsl:
   check_interval: 300
 
   # Volatility percentage for stop-loss calculation (e.g., 0.01 = 1%)
-  # This is the base risk percentage before leverage adjustment
-  # Formula: SL_distance = entry_price × volatility_pct × leverage
-  # Example: For 1% volatility with 5x leverage, actual position loss at SL is 5%
+  # This is the base risk percentage (NOT adjusted by leverage)
+  # Formula: SL_distance = entry_price × volatility_pct
+  # Example: For entry price $100, volatility 1%:
+  #   - Long position: SL = $99 (1% below entry)
+  #   - Short position: SL = $101 (1% above entry)
   # Default: 0.01 (1%)
   volatility_pct: 0.01
 
   # Profit-loss ratio for take-profit calculation (e.g., 5.0 = 5:1 ratio)
-  # Take-profit distance is stop-loss distance multiplied by this ratio
-  # Example: If SL is 1%, TP will be 5% (with 5:1 ratio)
+  # Formula: TP_distance = entry_price × volatility_pct × profit_loss_ratio
+  # Example: For entry price $100, volatility 1%, ratio 5:1:
+  #   - Long position: TP = $105 (5% above entry)
+  #   - Short position: TP = $95 (5% below entry)
   # Default: 5.0 (5:1 ratio)
+  #
+  # Note: TP and SL are placed as TWO SEPARATE ORDERS to ensure both work correctly
+  # (OKX API limitation: when both parameters sent together, only SL may execute)
   profit_loss_ratio: 5.0

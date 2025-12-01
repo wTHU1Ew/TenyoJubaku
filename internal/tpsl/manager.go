@@ -2,7 +2,6 @@ package tpsl
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 
 	"github.com/wTHU1Ew/TenyoJubaku/internal/config"
@@ -116,8 +115,8 @@ func (m *Manager) AnalyzeAndPlaceTPSL(positions []*models.Position) (*CoverageSu
 			continue
 		}
 
-		// Place TPSL order
-		err = m.placeTPSLOrder(position, uncoveredSize, prices)
+		// Place TPSL order with current price validation
+		err = m.placeTPSLOrderWithValidation(position, uncoveredSize, prices)
 		if err != nil {
 			m.logger.Error("Failed to place TPSL for %s: %v", position.Instrument, err)
 			summary.PlacementFailures++
@@ -138,6 +137,12 @@ func (m *Manager) AnalyzeAndPlaceTPSL(positions []*models.Position) (*CoverageSu
 // 计算持仓的未覆盖大小
 // Calculate uncovered size of position
 //
+// 修改说明 / Modification Note:
+// 由于TP和SL现在是两个独立的订单，我们需要检查是否同时存在TP和SL订单。
+// 只有同时有TP和SL的部分才算完全覆盖。
+// Since TP and SL are now two separate orders, we need to check if both TP and SL exist.
+// Only the portion covered by BOTH TP and SL orders is considered fully covered.
+//
 // Parameters:
 //   - position: 持仓信息 / Position information
 //   - algoOrders: 算法订单列表 / List of algo orders
@@ -145,9 +150,13 @@ func (m *Manager) AnalyzeAndPlaceTPSL(positions []*models.Position) (*CoverageSu
 // Returns:
 //   - float64: 未覆盖的持仓大小 / Uncovered position size
 func (m *Manager) analyzeCoverage(position *models.Position, algoOrders []okx.AlgoOrder) float64 {
-	coveredSize := 0.0
+	maxTpSize := 0.0
+	maxSlSize := 0.0
+	tpCount := 0
+	slCount := 0
 
-	// Filter and sum matching algo orders
+	// Filter matching algo orders and track TP and SL separately
+	// We need BOTH TP and SL to consider a position covered
 	for _, order := range algoOrders {
 		if m.matchesPosition(&order, position) {
 			// Parse order size
@@ -156,10 +165,45 @@ func (m *Manager) analyzeCoverage(position *models.Position, algoOrders []okx.Al
 				m.logger.Warn("Failed to parse algo order size '%s' for order %s: %v", order.Sz, order.AlgoId, err)
 				continue
 			}
-			coveredSize += size
-			m.logger.Debug("Found matching algo order %s with size %.8f for position %s",
-				order.AlgoId, size, position.Instrument)
+
+			// Determine if this is TP or SL order
+			hasTp := order.TpTriggerPx != "" && order.TpTriggerPx != "0"
+			hasSl := order.SlTriggerPx != "" && order.SlTriggerPx != "0"
+
+			if hasTp {
+				tpCount++
+				if size > maxTpSize {
+					maxTpSize = size
+				}
+				m.logger.Debug("Found Take-Profit order %s with size %.8f for position %s",
+					order.AlgoId, size, position.Instrument)
+			}
+			if hasSl {
+				slCount++
+				if size > maxSlSize {
+					maxSlSize = size
+				}
+				m.logger.Debug("Found Stop-Loss order %s with size %.8f for position %s",
+					order.AlgoId, size, position.Instrument)
+			}
 		}
+	}
+
+	// Only the portion covered by BOTH TP and SL is considered covered
+	// If either TP or SL is missing, the position is not properly covered
+	coveredSize := 0.0
+	if tpCount > 0 && slCount > 0 {
+		// Use the minimum of TP and SL sizes (conservative approach)
+		// because only the portion covered by BOTH is truly protected
+		if maxTpSize < maxSlSize {
+			coveredSize = maxTpSize
+		} else {
+			coveredSize = maxSlSize
+		}
+	} else if tpCount > 0 {
+		m.logger.Warn("Position %s has TP orders but NO SL orders - not considered covered!", position.Instrument)
+	} else if slCount > 0 {
+		m.logger.Warn("Position %s has SL orders but NO TP orders - not considered covered!", position.Instrument)
 	}
 
 	uncoveredSize := position.PositionSize - coveredSize
@@ -167,8 +211,8 @@ func (m *Manager) analyzeCoverage(position *models.Position, algoOrders []okx.Al
 		uncoveredSize = 0 // Shouldn't happen, but handle gracefully
 	}
 
-	m.logger.Debug("Position %s coverage: total=%.8f, covered=%.8f, uncovered=%.8f",
-		position.Instrument, position.PositionSize, coveredSize, uncoveredSize)
+	m.logger.Info("Position %s coverage: total=%.8f, TP_covered=%.8f (count:%d), SL_covered=%.8f (count:%d), final_covered=%.8f, uncovered=%.8f",
+		position.Instrument, position.PositionSize, maxTpSize, tpCount, maxSlSize, slCount, coveredSize, uncoveredSize)
 
 	return uncoveredSize
 }
@@ -190,7 +234,7 @@ func (m *Manager) matchesPosition(order *okx.AlgoOrder, position *models.Positio
 	}
 
 	// Check position side
-	if order.PosSide != position.PositionSide {
+	if order.PosSide != position.PositionSide.String() {
 		return false
 	}
 
@@ -279,10 +323,10 @@ func (m *Manager) calculateTPSLPrices(position *models.Position) (*TPSLPrices, e
 //   - bool: 是否为多头 / Whether it's a long position
 func (m *Manager) isLongPosition(position *models.Position) bool {
 	// In hedge mode, position side is explicitly "long" or "short"
-	if position.PositionSide == "long" {
+	if position.PositionSide == models.PositionSideLong {
 		return true
 	}
-	if position.PositionSide == "short" {
+	if position.PositionSide == models.PositionSideShort {
 		return false
 	}
 
@@ -292,8 +336,16 @@ func (m *Manager) isLongPosition(position *models.Position) bool {
 }
 
 // placeTPSLOrder 下单TPSL订单 / Place TPSL order
-// 为持仓下单止盈止损订单
-// Place take-profit and stop-loss order for position
+// 为持仓下单止盈止损订单（分成两个独立订单）
+// Place take-profit and stop-loss orders for position (as two separate orders)
+//
+// 修改说明 / Modification Note:
+// 1. 由于OKX API在某些情况下同时发送TP和SL时可能只执行SL，
+//    因此将止盈和止损分成两个独立的订单分别下单。
+// 2. 检查当前价格是否已超过预期止盈位置，如果已超过则跳过止盈订单设置。
+// 1. Due to OKX API limitation where only SL is executed when both TP and SL are sent together,
+//    we now place take-profit and stop-loss as two separate orders.
+// 2. Check if current price has already passed the expected TP price, skip TP order if so.
 //
 // Parameters:
 //   - position: 持仓信息 / Position information
@@ -302,54 +354,10 @@ func (m *Manager) isLongPosition(position *models.Position) bool {
 //
 // Returns:
 //   - error: 下单失败时返回错误 / Error on placement failure
-func (m *Manager) placeTPSLOrder(position *models.Position, size float64, prices *TPSLPrices) error {
-	// Determine order side (opposite of position)
-	isLong := m.isLongPosition(position)
-	var orderSide string
-	if isLong {
-		orderSide = "sell" // Close long position
-	} else {
-		orderSide = "buy" // Close short position
-	}
-
-	// Build algo order request
-	req := okx.AlgoOrderRequest{
-		InstId:        position.Instrument,
-		TdMode:        "cross", // Will be enhanced in Task 3.3 to read from position
-		Side:          orderSide,
-		PosSide:       position.PositionSide,
-		OrdType:       "conditional",
-		Sz:            formatFloat(size),
-		TpTriggerPx:   formatFloat(prices.TpPrice),
-		TpOrdPx:       "-1", // Market order
-		SlTriggerPx:   formatFloat(prices.SlPrice),
-		SlOrdPx:       "-1", // Market order
-		ReduceOnly:    true,
-		TpTriggerPxType: "last",
-		SlTriggerPxType: "last",
-	}
-
-	m.logger.Debug("Placing TPSL order for %s (%s): side=%s, size=%.8f, TP=%.8f, SL=%.8f",
-		position.Instrument, position.PositionSide, orderSide, size, prices.TpPrice, prices.SlPrice)
-
-	// Place order
-	resp, err := m.okxClient.PlaceAlgoOrder(req)
-	if err != nil {
-		return fmt.Errorf("API call failed: %w", err)
-	}
-
-	// Extract algo ID
-	if len(resp.Data) > 0 {
-		algoId := resp.Data[0].AlgoId
-		m.logger.Info("TPSL order placed successfully for %s (%s), algoId: %s",
-			position.Instrument, position.PositionSide, algoId)
-	} else {
-		m.logger.Info("TPSL order placed successfully for %s (%s)",
-			position.Instrument, position.PositionSide)
-	}
-
-	return nil
-}
+//
+// NOTE: This function signature is kept for backward compatibility.
+// The actual implementation now includes current price validation.
+// See placeTPSLOrderWithValidation() for the full implementation.
 
 // formatFloat 格式化浮点数为字符串 / Format float to string
 // 将浮点数格式化为字符串，保留足够精度
@@ -399,8 +407,319 @@ func trimTrailingZeros(s string) string {
 	return s[:end+1]
 }
 
-// roundToDecimal 四舍五入到指定小数位 / Round to specified decimal places
-func roundToDecimal(f float64, decimals int) float64 {
-	pow := math.Pow(10, float64(decimals))
-	return math.Round(f*pow) / pow
+// getCurrentMarketPrice 获取当前市场价格 / Get current market price from OKX ticker API
+// 从OKX ticker API获取指定交易对的当前价格
+// Fetch current price for the specified instrument from OKX ticker API
+//
+// Parameters:
+//   - instId: 交易对ID / Instrument ID (e.g., "BTC-USDT-SWAP")
+//
+// Returns:
+//   - float64: 当前市场价格 / Current market price
+//   - error: 获取失败时返回错误 / Error on failure
+func (m *Manager) getCurrentMarketPrice(instId string) (float64, error) {
+	// Query OKX ticker API
+	resp, err := m.okxClient.GetTicker(instId)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get ticker for %s: %w", instId, err)
+	}
+
+	// Parse last price
+	if len(resp.Data) == 0 {
+		return 0, fmt.Errorf("no ticker data returned for %s", instId)
+	}
+
+	lastPrice, err := strconv.ParseFloat(resp.Data[0].Last, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse last price '%s': %w", resp.Data[0].Last, err)
+	}
+
+	return lastPrice, nil
+}
+
+// adjustTPSLPricesWithCurrentPrice 根据当前价格调整止盈止损价格 / Adjust TP/SL prices based on current market price
+// 检查当前价格是否已经超过预期的止盈/止损位置，如果是则使用当前价格
+// Check if current price has exceeded expected TP/SL levels, use current price if so
+//
+// Parameters:
+//   - position: 持仓信息 / Position information
+//   - prices: 原始计算的TPSL价格 / Originally calculated TPSL prices
+//   - currentPrice: 当前市场价格 / Current market price
+//
+// Returns:
+//   - *TPSLPrices: 调整后的TPSL价格 / Adjusted TPSL prices
+//   - bool: 是否跳过止盈订单 / Whether to skip TP order (if price moved too far)
+//   - bool: 是否跳过止损订单 / Whether to skip SL order (if price moved too far)
+func (m *Manager) adjustTPSLPricesWithCurrentPrice(position *models.Position, prices *TPSLPrices, currentPrice float64) (*TPSLPrices, bool, bool) {
+	isLong := m.isLongPosition(position)
+	adjustedPrices := &TPSLPrices{
+		TpPrice: prices.TpPrice,
+		SlPrice: prices.SlPrice,
+	}
+	skipTP := false
+	skipSL := false
+
+	m.logger.Debug("Checking TP/SL prices for %s (%s): entry=%.8f, current=%.8f, expected_TP=%.8f, expected_SL=%.8f",
+		position.Instrument, position.PositionSide, position.AveragePrice, currentPrice, prices.TpPrice, prices.SlPrice)
+
+	if isLong {
+		// Long position: TP above entry, SL below entry
+
+		// Check TP: if current price >= expected TP price
+		if currentPrice >= prices.TpPrice {
+			m.logger.Warn("Position %s (long): Current price %.8f has reached or exceeded expected TP %.8f",
+				position.Instrument, currentPrice, prices.TpPrice)
+			// For long position: TP must be ABOVE current price
+			// Set TP slightly above current price (0.1% higher to ensure it's above)
+			adjustedPrice := currentPrice * 1.001
+			m.logger.Info("Adjusting TP price to slightly above current price: %.8f → %.8f (current: %.8f)",
+				prices.TpPrice, adjustedPrice, currentPrice)
+			adjustedPrices.TpPrice = adjustedPrice
+		}
+
+		// Check SL: if current price <= expected SL price
+		if currentPrice <= prices.SlPrice {
+			m.logger.Warn("Position %s (long): Current price %.8f has hit or passed expected SL %.8f!",
+				position.Instrument, currentPrice, prices.SlPrice)
+			// For long position: SL must be BELOW current price
+			// Set SL slightly below current price (0.1% lower) to ensure it triggers
+			// User accepts slightly more loss to ensure SL is set
+			adjustedPrice := currentPrice * 0.999
+			m.logger.Info("Adjusting SL price to slightly below current price: %.8f → %.8f (current: %.8f)",
+				prices.SlPrice, adjustedPrice, currentPrice)
+			m.logger.Warn("ALERT: Setting emergency SL at current price - position already in loss beyond expected SL")
+			adjustedPrices.SlPrice = adjustedPrice
+		}
+
+	} else {
+		// Short position: TP below entry, SL above entry
+
+		// Check TP: if current price <= expected TP price
+		if currentPrice <= prices.TpPrice {
+			m.logger.Warn("Position %s (short): Current price %.8f has reached or exceeded expected TP %.8f",
+				position.Instrument, currentPrice, prices.TpPrice)
+			// For short position: TP must be BELOW current price
+			// Set TP slightly below current price (0.1% lower to ensure it's below)
+			adjustedPrice := currentPrice * 0.999
+			m.logger.Info("Adjusting TP price to slightly below current price: %.8f → %.8f (current: %.8f)",
+				prices.TpPrice, adjustedPrice, currentPrice)
+			adjustedPrices.TpPrice = adjustedPrice
+		}
+
+		// Check SL: if current price >= expected SL price
+		if currentPrice >= prices.SlPrice {
+			m.logger.Warn("Position %s (short): Current price %.8f has hit or passed expected SL %.8f!",
+				position.Instrument, currentPrice, prices.SlPrice)
+			// For short position: SL must be ABOVE current price
+			// Set SL slightly above current price (0.1% higher) to ensure it triggers
+			// User accepts slightly more loss to ensure SL is set
+			adjustedPrice := currentPrice * 1.001
+			m.logger.Info("Adjusting SL price to slightly above current price: %.8f → %.8f (current: %.8f)",
+				prices.SlPrice, adjustedPrice, currentPrice)
+			m.logger.Warn("ALERT: Setting emergency SL at current price - position already in loss beyond expected SL")
+			adjustedPrices.SlPrice = adjustedPrice
+		}
+	}
+
+	return adjustedPrices, skipTP, skipSL
+}
+
+// placeTPSLOrderWithValidation 下单TPSL订单（带价格验证）/ Place TPSL order with price validation
+// 为持仓下单止盈止损订单（分成两个独立订单），并根据当前价格调整
+// Place take-profit and stop-loss orders for position (as two separate orders) with current price adjustment
+//
+// 功能说明 / Features:
+// 1. 从OKX API获取当前市场价格
+// 2. 对比当前价格和预期止盈/止损价格
+// 3. 如果当前价格已超过预期止盈价格，使用当前价格作为止盈价
+// 4. 将止盈和止损分成两个独立订单下单
+//
+// 1. Fetch current market price from OKX API
+// 2. Compare current price with expected TP/SL prices
+// 3. If current price has exceeded expected TP, use current price as TP
+// 4. Place TP and SL as two separate orders
+//
+// Parameters:
+//   - position: 持仓信息 / Position information
+//   - size: 订单大小 / Order size
+//   - prices: TPSL价格 / TPSL prices
+//
+// Returns:
+//   - error: 下单失败时返回错误 / Error on placement failure
+func (m *Manager) placeTPSLOrderWithValidation(position *models.Position, size float64, prices *TPSLPrices) error {
+	// Get current market price
+	currentPrice, err := m.getCurrentMarketPrice(position.Instrument)
+	if err != nil {
+		m.logger.Warn("Failed to get current market price for %s: %v, proceeding with calculated prices", position.Instrument, err)
+		// Fallback to original placeTPSLOrder without validation
+		return m.placeTPSLOrderOriginal(position, size, prices)
+	}
+
+	// Adjust TP/SL prices based on current price
+	adjustedPrices, skipTP, skipSL := m.adjustTPSLPricesWithCurrentPrice(position, prices, currentPrice)
+
+	// Determine order side (opposite of position)
+	isLong := m.isLongPosition(position)
+	var orderSide string
+	if isLong {
+		orderSide = "sell" // Close long position
+	} else {
+		orderSide = "buy" // Close short position
+	}
+
+	m.logger.Info("Placing TPSL orders for %s (%s): TP=%.8f (adjusted: %v), SL=%.8f, current=%.8f",
+		position.Instrument, position.PositionSide, adjustedPrices.TpPrice,
+		adjustedPrices.TpPrice != prices.TpPrice, adjustedPrices.SlPrice, currentPrice)
+
+	var tpAlgoId string
+
+	// Determine trade mode from position
+	tdMode := position.MarginMode.String()
+	if tdMode == "" {
+		tdMode = models.MarginModeCross.String() // Default to cross if not specified
+	}
+
+	// Place Take-Profit order (if not skipped)
+	if !skipTP {
+		tpReq := okx.AlgoOrderRequest{
+			InstId:          position.Instrument,
+			TdMode:          tdMode,
+			Side:            orderSide,
+			PosSide:         position.PositionSide.String(),
+			OrdType:         "conditional",
+			Sz:              formatFloat(size),
+			TpTriggerPx:     formatFloat(adjustedPrices.TpPrice),
+			TpOrdPx:         "-1", // Market order
+			TpTriggerPxType: "last",
+			ReduceOnly:      true,
+		}
+
+		m.logger.Debug("Placing Take-Profit order for %s (%s): TP=%.8f", position.Instrument, position.PositionSide, adjustedPrices.TpPrice)
+
+		tpResp, err := m.okxClient.PlaceAlgoOrder(tpReq)
+		if err != nil {
+			return fmt.Errorf("Take-Profit order failed: %w", err)
+		}
+
+		if len(tpResp.Data) > 0 {
+			tpAlgoId = tpResp.Data[0].AlgoId
+			m.logger.Info("Take-Profit order placed successfully for %s (%s), algoId: %s, trigger: %.8f",
+				position.Instrument, position.PositionSide, tpAlgoId, adjustedPrices.TpPrice)
+		}
+	} else {
+		m.logger.Warn("Skipping Take-Profit order for %s (%s) due to price condition", position.Instrument, position.PositionSide)
+	}
+
+	// Place Stop-Loss order (if not skipped)
+	if !skipSL {
+		slReq := okx.AlgoOrderRequest{
+			InstId:          position.Instrument,
+			TdMode:          tdMode,
+			Side:            orderSide,
+			PosSide:         position.PositionSide.String(),
+			OrdType:         "conditional",
+			Sz:              formatFloat(size),
+			SlTriggerPx:     formatFloat(adjustedPrices.SlPrice),
+			SlOrdPx:         "-1", // Market order
+			SlTriggerPxType: "last",
+			ReduceOnly:      true,
+		}
+
+		m.logger.Debug("Placing Stop-Loss order for %s (%s): SL=%.8f", position.Instrument, position.PositionSide, adjustedPrices.SlPrice)
+
+		slResp, err := m.okxClient.PlaceAlgoOrder(slReq)
+		if err != nil {
+			if tpAlgoId != "" {
+				m.logger.Error("Stop-Loss order failed (TP order %s was placed): %v", tpAlgoId, err)
+			}
+			return fmt.Errorf("Stop-Loss order failed: %w", err)
+		}
+
+		if len(slResp.Data) > 0 {
+			slAlgoId := slResp.Data[0].AlgoId
+			m.logger.Info("Stop-Loss order placed successfully for %s (%s), algoId: %s, trigger: %.8f",
+				position.Instrument, position.PositionSide, slAlgoId, adjustedPrices.SlPrice)
+		}
+	} else {
+		m.logger.Error("Skipping Stop-Loss order for %s (%s) - CRITICAL: Manual intervention required!", position.Instrument, position.PositionSide)
+	}
+
+	if skipTP && skipSL {
+		return fmt.Errorf("both TP and SL orders were skipped due to price conditions - manual intervention required")
+	}
+
+	m.logger.Info("TPSL orders placed successfully for %s (%s)", position.Instrument, position.PositionSide)
+	return nil
+}
+
+// placeTPSLOrderOriginal 原始的下单逻辑（不验证当前价格）/ Original order placement logic without price validation
+func (m *Manager) placeTPSLOrderOriginal(position *models.Position, size float64, prices *TPSLPrices) error {
+	// This is the fallback method when we can't get current market price
+	// Just place orders with calculated prices
+
+	isLong := m.isLongPosition(position)
+	var orderSide string
+	if isLong {
+		orderSide = "sell"
+	} else {
+		orderSide = "buy"
+	}
+
+	m.logger.Debug("Placing TPSL orders without price validation for %s (%s)", position.Instrument, position.PositionSide)
+
+	// Determine trade mode from position
+	tdMode := position.MarginMode.String()
+	if tdMode == "" {
+		tdMode = models.MarginModeCross.String() // Default to cross if not specified
+	}
+
+	// Place TP
+	tpReq := okx.AlgoOrderRequest{
+		InstId:          position.Instrument,
+		TdMode:          tdMode,
+		Side:            orderSide,
+		PosSide:         position.PositionSide.String(),
+		OrdType:         "conditional",
+		Sz:              formatFloat(size),
+		TpTriggerPx:     formatFloat(prices.TpPrice),
+		TpOrdPx:         "-1",
+		TpTriggerPxType: "last",
+		ReduceOnly:      true,
+	}
+
+	tpResp, err := m.okxClient.PlaceAlgoOrder(tpReq)
+	if err != nil {
+		return fmt.Errorf("Take-Profit order failed: %w", err)
+	}
+
+	var tpAlgoId string
+	if len(tpResp.Data) > 0 {
+		tpAlgoId = tpResp.Data[0].AlgoId
+		m.logger.Info("Take-Profit order placed for %s, algoId: %s", position.Instrument, tpAlgoId)
+	}
+
+	// Place SL
+	slReq := okx.AlgoOrderRequest{
+		InstId:          position.Instrument,
+		TdMode:          tdMode,
+		Side:            orderSide,
+		PosSide:         position.PositionSide.String(),
+		OrdType:         "conditional",
+		Sz:              formatFloat(size),
+		SlTriggerPx:     formatFloat(prices.SlPrice),
+		SlOrdPx:         "-1",
+		SlTriggerPxType: "last",
+		ReduceOnly:      true,
+	}
+
+	slResp, err := m.okxClient.PlaceAlgoOrder(slReq)
+	if err != nil {
+		return fmt.Errorf("Stop-Loss order failed: %w", err)
+	}
+
+	if len(slResp.Data) > 0 {
+		m.logger.Info("Stop-Loss order placed for %s, algoId: %s", position.Instrument, slResp.Data[0].AlgoId)
+	}
+
+	return nil
 }

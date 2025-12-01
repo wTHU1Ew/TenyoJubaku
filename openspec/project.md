@@ -66,6 +66,8 @@ For top-level tests involving specific order placement or account transaction op
 
 Each archive requires a commit to the remote repository. However, note that content containing user information must never be committed to the remote repository. If you are unsure whether a file contains user information, be sure to confirm with me.
 
+you should do "git" to push arhcieved changes to remote resposity.
+
 create .gitignore and README.md file by yourself.
 
 use git@github.com:wTHU1Ew/TenyoJubaku.git

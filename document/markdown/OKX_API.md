@@ -15760,7 +15760,7 @@ The algo order includes `trigger` order, `oco` order, `chase` order, `conditiona
     
     Copy to Clipboard
     
-    # Place Take Profit / Stop Loss Order
+    # Place Take Profit Order (ONLY TP, no SL - RECOMMENDED)
     POST /api/v5/trade/order-algo
     body
     {
@@ -15772,7 +15772,36 @@ The algo order includes `trigger` order, `oco` order, `chase` order, `conditiona
         "tpTriggerPx":"15",
         "tpOrdPx":"18"
     }
-    
+
+    # Place Stop Loss Order (ONLY SL, no TP - RECOMMENDED)
+    POST /api/v5/trade/order-algo
+    body
+    {
+        "instId":"BTC-USDT",
+        "tdMode":"cross",
+        "side":"buy",
+        "ordType":"conditional",
+        "sz":"2",
+        "slTriggerPx":"10",
+        "slOrdPx":"9"
+    }
+
+    # ⚠️ WARNING: Placing both TP and SL in one order may cause TP to be ignored
+    # The following example may ONLY execute stop-loss:
+    POST /api/v5/trade/order-algo
+    body
+    {
+        "instId":"BTC-USDT",
+        "tdMode":"cross",
+        "side":"buy",
+        "ordType":"conditional",
+        "sz":"2",
+        "tpTriggerPx":"15",
+        "tpOrdPx":"18",
+        "slTriggerPx":"10",
+        "slOrdPx":"9"
+    }
+
     # Place Trigger Order
     POST /api/v5/trade/order-algo
     body
@@ -15937,10 +15966,18 @@ Valid values:
 `false`: Place a TP/SL order that is not associated with the position   
 The default value is `false`. If `true` is passed in, users must pass reduceOnly = true as well, indicating that when placing a TP/SL order associated with a position, it must be a reduceOnly order.   
 Only applicable to `Futures mode` and `Multi-currency margin`.  
-reduceOnly | Boolean | No | Whether the order can only reduce the position size.   
-Valid options: `true` or `false`. The default value is `false`.  
-Take Profit / Stop Loss Order  
-When placing net TP/SL order (ordType=conditional) and both take-profit and stop-loss parameters are sent, only stop-loss logic will be performed and take-profit logic will be ignored. 
+reduceOnly | Boolean | No | Whether the order can only reduce the position size.
+Valid options: `true` or `false`. The default value is `false`.
+Take Profit / Stop Loss Order
+⚠️ **IMPORTANT LIMITATION**: When placing TP/SL order (ordType=conditional) and both take-profit and stop-loss parameters are sent together, only stop-loss logic will be performed and take-profit logic will be ignored. This applies to:
+- Net mode (single-direction position mode) - officially documented
+- Long/short mode (hedge mode) - may also be affected in certain situations
+
+**RECOMMENDED SOLUTION**: Place take-profit and stop-loss as **TWO SEPARATE ORDERS** to ensure both are executed:
+1. First order: Only include `tpTriggerPx` and `tpOrdPx` (no SL parameters)
+2. Second order: Only include `slTriggerPx` and `slOrdPx` (no TP parameters)
+
+This ensures both orders are active and will not interfere with each other.
 
 **Chase order**
 

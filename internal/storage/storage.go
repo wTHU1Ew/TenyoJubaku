@@ -99,7 +99,8 @@ func (s *Storage) initSchema() error {
 		average_price REAL NOT NULL,
 		unrealized_pnl REAL NOT NULL,
 		margin REAL NOT NULL,
-		leverage REAL
+		leverage REAL,
+		margin_mode VARCHAR(10) DEFAULT 'cross'
 	);
 	CREATE INDEX IF NOT EXISTS idx_positions_timestamp ON positions(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_positions_timestamp_instrument ON positions(timestamp, instrument);
@@ -171,8 +172,8 @@ func (s *Storage) InsertPosition(position *models.Position) error {
 	}
 
 	query := `
-		INSERT INTO positions (timestamp, instrument, position_side, position_size, average_price, unrealized_pnl, margin, leverage)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO positions (timestamp, instrument, position_side, position_size, average_price, unrealized_pnl, margin, leverage, margin_mode)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.db.Exec(query,
@@ -184,6 +185,7 @@ func (s *Storage) InsertPosition(position *models.Position) error {
 		position.UnrealizedPnL,
 		position.Margin,
 		position.Leverage,
+		position.MarginMode,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert position: %w", err)
@@ -248,7 +250,7 @@ func (s *Storage) GetLatestAccountBalances() ([]models.AccountBalance, error) {
 // GetLatestPositions 获取最新的持仓 / Get latest positions
 func (s *Storage) GetLatestPositions() ([]models.Position, error) {
 	query := `
-		SELECT id, timestamp, instrument, position_side, position_size, average_price, unrealized_pnl, margin, leverage
+		SELECT id, timestamp, instrument, position_side, position_size, average_price, unrealized_pnl, margin, leverage, margin_mode
 		FROM positions
 		WHERE timestamp = (SELECT MAX(timestamp) FROM positions)
 		ORDER BY instrument
@@ -264,7 +266,7 @@ func (s *Storage) GetLatestPositions() ([]models.Position, error) {
 	for rows.Next() {
 		var p models.Position
 		var timestamp string
-		if err := rows.Scan(&p.ID, &timestamp, &p.Instrument, &p.PositionSide, &p.PositionSize, &p.AveragePrice, &p.UnrealizedPnL, &p.Margin, &p.Leverage); err != nil {
+		if err := rows.Scan(&p.ID, &timestamp, &p.Instrument, &p.PositionSide, &p.PositionSize, &p.AveragePrice, &p.UnrealizedPnL, &p.Margin, &p.Leverage, &p.MarginMode); err != nil {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
 

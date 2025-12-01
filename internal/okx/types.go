@@ -165,3 +165,29 @@ type AlgoOrder struct {
 	TriggerTime     string `json:"triggerTime"`
 	ReduceOnly      string `json:"reduceOnly"`
 }
+
+// TickerResponse OKX行情响应 / OKX ticker response
+type TickerResponse struct {
+	Code string       `json:"code"`
+	Msg  string       `json:"msg"`
+	Data []TickerData `json:"data"`
+}
+
+// TickerData OKX行情数据 / OKX ticker data
+type TickerData struct {
+	InstId    string `json:"instId"`
+	Last      string `json:"last"`      // Last traded price
+	LastSz    string `json:"lastSz"`    // Last traded size
+	AskPx     string `json:"askPx"`     // Best ask price
+	AskSz     string `json:"askSz"`     // Best ask size
+	BidPx     string `json:"bidPx"`     // Best bid price
+	BidSz     string `json:"bidSz"`     // Best bid size
+	Open24h   string `json:"open24h"`   // Open price in the past 24 hours
+	High24h   string `json:"high24h"`   // Highest price in the past 24 hours
+	Low24h    string `json:"low24h"`    // Lowest price in the past 24 hours
+	VolCcy24h string `json:"volCcy24h"` // 24h trading volume (quote currency)
+	Vol24h    string `json:"vol24h"`    // 24h trading volume (base currency)
+	Ts        string `json:"ts"`        // Ticker data generation time
+	SodUtc0   string `json:"sodUtc0"`   // Open price at UTC 0
+	SodUtc8   string `json:"sodUtc8"`   // Open price at UTC 8
+}

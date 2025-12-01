@@ -292,10 +292,16 @@ func (m *Monitor) fetchAndStorePositions() error {
 			leverage = 0
 		}
 
+		// Get margin mode (cross or isolated)
+		marginMode := models.MarginMode(pos.MgnMode)
+		if marginMode == "" {
+			marginMode = models.MarginModeCross // Default to cross if not specified
+		}
+
 		// Normalize position side
-		posSide := pos.PosSide
+		posSide := models.PositionSide(pos.PosSide)
 		if posSide == "" {
-			posSide = "net" // Default for one-way mode
+			posSide = models.PositionSideNet // Default for one-way mode
 		}
 
 		// Create position model
@@ -308,6 +314,7 @@ func (m *Monitor) fetchAndStorePositions() error {
 			UnrealizedPnL: upl,
 			Margin:        margin,
 			Leverage:      leverage,
+			MarginMode:    marginMode,
 		}
 
 		// Insert into database
