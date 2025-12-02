@@ -248,15 +248,42 @@ func (s *Storage) GetLatestAccountBalances() ([]models.AccountBalance, error) {
 }
 
 // GetLatestPositions 获取最新的持仓 / Get latest positions
+// Returns only positions from the most recent snapshot.
+// If the latest snapshot is older than 10 minutes, returns empty slice
+// (assumes positions have been closed since last monitoring cycle)
 func (s *Storage) GetLatestPositions() ([]models.Position, error) {
+	// First, get the latest timestamp
+	var latestTimestamp string
+	err := s.db.QueryRow("SELECT MAX(timestamp) FROM positions").Scan(&latestTimestamp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest timestamp: %w", err)
+	}
+
+	// If no positions in database yet, return empty slice
+	if latestTimestamp == "" {
+		return []models.Position{}, nil
+	}
+
+	// Parse the latest timestamp
+	latestTime, err := time.Parse(time.RFC3339, latestTimestamp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse latest timestamp: %w", err)
+	}
+
+	// If latest snapshot is older than 10 minutes, consider all positions closed
+	// This handles the case where monitoring detected no positions and didn't insert records
+	if time.Since(latestTime) > 10*time.Minute {
+		return []models.Position{}, nil
+	}
+
 	query := `
 		SELECT id, timestamp, instrument, position_side, position_size, average_price, unrealized_pnl, margin, leverage, margin_mode
 		FROM positions
-		WHERE timestamp = (SELECT MAX(timestamp) FROM positions)
+		WHERE timestamp = ?
 		ORDER BY instrument
 	`
 
-	rows, err := s.db.Query(query)
+	rows, err := s.db.Query(query, latestTimestamp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest positions: %w", err)
 	}
