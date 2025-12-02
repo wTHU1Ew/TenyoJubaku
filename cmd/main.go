@@ -64,7 +64,6 @@ func main() {
 		cfg.Database.WALMode,
 		cfg.Database.MaxOpenConns,
 		cfg.Database.MaxIdleConns,
-		cfg.Database.PositionExpirationMinutes,
 	)
 	if err != nil {
 		log.Error("Failed to initialize database: %v", err)
@@ -72,7 +71,7 @@ func main() {
 		return
 	}
 	defer db.Close()
-	log.Info("Database initialized successfully (position expiration: %d minutes)", cfg.Database.PositionExpirationMinutes)
+	log.Info("Database initialized successfully")
 
 	// Initialize OKX API client
 	log.Info("Initializing OKX API client")
@@ -101,8 +100,8 @@ func main() {
 	// Initialize TPSL scheduler if enabled
 	var tpslScheduler *tpsl.Scheduler
 	if cfg.TPSL.Enabled {
-		log.Info("Initializing TPSL scheduler")
-		tpslScheduler = tpsl.NewScheduler(&cfg.TPSL, db, okxClient, log)
+		log.Info("Initializing TPSL scheduler (real-time API mode)")
+		tpslScheduler = tpsl.NewScheduler(&cfg.TPSL, okxClient, log)
 	} else {
 		log.Info("TPSL management disabled in configuration")
 	}

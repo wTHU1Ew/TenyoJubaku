@@ -13,8 +13,7 @@ import (
 
 // Storage 数据库存储层 / Database storage layer
 type Storage struct {
-	db                        *sql.DB
-	positionExpirationMinutes int
+	db *sql.DB
 }
 
 // New 创建新的存储实例 / Create new storage instance
@@ -26,14 +25,13 @@ type Storage struct {
 //   - walMode: Whether to enable WAL (Write-Ahead Logging) mode for better concurrency performance
 //   - maxOpenConns: Maximum number of open connections
 //   - maxIdleConns: Maximum number of idle connections
-//   - positionExpirationMinutes: Position record expiration time in minutes (records older than this are considered stale)
 //
 // Returns:
 //   - *Storage: 已初始化的存储实例，包含数据库连接和表结构
 //     Initialized storage instance with database connection and table schema
 //   - error: 数据库创建失败或表结构初始化失败时返回错误
 //     Error on database creation failure or schema initialization failure
-func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns, positionExpirationMinutes int) (*Storage, error) {
+func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage, error) {
 	// Ensure database directory exists
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0750); err != nil {
@@ -58,10 +56,7 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns, positionExpira
 		}
 	}
 
-	storage := &Storage{
-		db:                        db,
-		positionExpirationMinutes: positionExpirationMinutes,
-	}
+	storage := &Storage{db: db}
 
 	// Initialize database schema
 	if err := storage.initSchema(); err != nil {
@@ -254,8 +249,8 @@ func (s *Storage) GetLatestAccountBalances() ([]models.AccountBalance, error) {
 
 // GetLatestPositions 获取最新的持仓 / Get latest positions
 // Returns only positions from the most recent snapshot.
-// If the latest snapshot is older than 10 minutes, returns empty slice
-// (assumes positions have been closed since last monitoring cycle)
+// NOTE: This function is now mainly used for historical data analysis.
+// TPSL service fetches positions directly from OKX API for real-time accuracy.
 func (s *Storage) GetLatestPositions() ([]models.Position, error) {
 	// First, get the latest timestamp
 	var latestTimestamp string
@@ -266,19 +261,6 @@ func (s *Storage) GetLatestPositions() ([]models.Position, error) {
 
 	// If no positions in database yet, return empty slice
 	if latestTimestamp == "" {
-		return []models.Position{}, nil
-	}
-
-	// Parse the latest timestamp
-	latestTime, err := time.Parse(time.RFC3339, latestTimestamp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse latest timestamp: %w", err)
-	}
-
-	// If latest snapshot is older than the configured expiration time, consider all positions closed
-	// This handles the case where monitoring detected no positions and didn't insert records
-	expirationDuration := time.Duration(s.positionExpirationMinutes) * time.Minute
-	if time.Since(latestTime) > expirationDuration {
 		return []models.Position{}, nil
 	}
 

@@ -36,11 +36,10 @@ type MonitoringConfig struct {
 
 // DatabaseConfig 数据库配置 / Database configuration
 type DatabaseConfig struct {
-	Path                      string `yaml:"path"`
-	WALMode                   bool   `yaml:"wal_mode"`
-	MaxOpenConns              int    `yaml:"max_open_conns"`
-	MaxIdleConns              int    `yaml:"max_idle_conns"`
-	PositionExpirationMinutes int    `yaml:"position_expiration_minutes"`
+	Path         string `yaml:"path"`
+	WALMode      bool   `yaml:"wal_mode"`
+	MaxOpenConns int    `yaml:"max_open_conns"`
+	MaxIdleConns int    `yaml:"max_idle_conns"`
 }
 
 // LoggingConfig 日志配置 / Logging configuration
@@ -145,9 +144,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Database.MaxIdleConns <= 0 {
 		c.Database.MaxIdleConns = 1
-	}
-	if c.Database.PositionExpirationMinutes <= 0 {
-		c.Database.PositionExpirationMinutes = 10 // Default 10 minutes
 	}
 
 	// Validate logging configuration

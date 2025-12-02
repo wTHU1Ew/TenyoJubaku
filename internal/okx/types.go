@@ -39,63 +39,66 @@ type AccountBalanceResponse struct {
 	} `json:"data"`
 }
 
+// PositionData OKX持仓数据项 / OKX position data item
+type PositionData struct {
+	InstType       string               `json:"instType"`
+	MgnMode        string               `json:"mgnMode"`
+	PosId          string               `json:"posId"`
+	PosSide        string               `json:"posSide"`
+	Pos            string               `json:"pos"`
+	BaseBal        string               `json:"baseBal"`
+	QuoteBal       string               `json:"quoteBal"`
+	PosCcy         string               `json:"posCcy"`
+	AvailPos       string               `json:"availPos"`
+	AvgPx          string               `json:"avgPx"`
+	Upl            string               `json:"upl"`
+	UplRatio       string               `json:"uplRatio"`
+	UplLastPx      string               `json:"uplLastPx"`
+	UplRatioLastPx string               `json:"uplRatioLastPx"`
+	InstId         string               `json:"instId"`
+	Lever          string               `json:"lever"`
+	LiqPx          string               `json:"liqPx"`
+	MarkPx         string               `json:"markPx"`
+	Imr            string               `json:"imr"`
+	Margin         string               `json:"margin"`
+	MgnRatio       string               `json:"mgnRatio"`
+	Mmr            string               `json:"mmr"`
+	Liab           string               `json:"liab"`
+	LiabCcy        string               `json:"liabCcy"`
+	Interest       string               `json:"interest"`
+	TradeId        string               `json:"tradeId"`
+	OptVal         string               `json:"optVal"`
+	NotionalUsd    string               `json:"notionalUsd"`
+	Adl            string               `json:"adl"`
+	Ccy            string               `json:"ccy"`
+	Last           string               `json:"last"`
+	UsdPx          string               `json:"usdPx"`
+	DeltaBS        string               `json:"deltaBS"`
+	DeltaPA        string               `json:"deltaPA"`
+	GammaBS        string               `json:"gammaBS"`
+	GammaPA        string               `json:"gammaPA"`
+	ThetaBS        string               `json:"thetaBS"`
+	ThetaPA        string               `json:"thetaPA"`
+	VegaBS         string               `json:"vegaBS"`
+	VegaPA         string               `json:"vegaPA"`
+	SpotInUseAmt   string               `json:"spotInUseAmt"`
+	ClSpotInUseAmt string               `json:"clSpotInUseAmt"`
+	RealizedPnl    string               `json:"realizedPnl"`
+	Pnl            string               `json:"pnl"`
+	Fee            string               `json:"fee"`
+	FundingFee     string               `json:"fundingFee"`
+	LiqPenalty     string               `json:"liqPenalty"`
+	CloseOrderAlgo []CloseOrderAlgoItem `json:"closeOrderAlgo"`
+	CTime          string               `json:"cTime"`
+	UTime          string               `json:"uTime"`
+	PTime          string               `json:"pTime"`
+}
+
 // PositionsResponse OKX持仓响应 / OKX positions response
 type PositionsResponse struct {
-	Code string `json:"code"`
-	Msg  string `json:"msg"`
-	Data []struct {
-		InstType      string `json:"instType"`
-		MgnMode       string `json:"mgnMode"`
-		PosId         string `json:"posId"`
-		PosSide       string `json:"posSide"`
-		Pos           string `json:"pos"`
-		BaseBal       string `json:"baseBal"`
-		QuoteBal      string `json:"quoteBal"`
-		PosCcy        string `json:"posCcy"`
-		AvailPos      string `json:"availPos"`
-		AvgPx         string `json:"avgPx"`
-		Upl           string `json:"upl"`
-		UplRatio      string `json:"uplRatio"`
-		UplLastPx     string `json:"uplLastPx"`
-		UplRatioLastPx string `json:"uplRatioLastPx"`
-		InstId        string `json:"instId"`
-		Lever         string `json:"lever"`
-		LiqPx         string `json:"liqPx"`
-		MarkPx        string `json:"markPx"`
-		Imr           string `json:"imr"`
-		Margin        string `json:"margin"`
-		MgnRatio      string `json:"mgnRatio"`
-		Mmr           string `json:"mmr"`
-		Liab          string `json:"liab"`
-		LiabCcy       string `json:"liabCcy"`
-		Interest      string `json:"interest"`
-		TradeId       string `json:"tradeId"`
-		OptVal        string `json:"optVal"`
-		NotionalUsd   string `json:"notionalUsd"`
-		Adl           string `json:"adl"`
-		Ccy           string `json:"ccy"`
-		Last          string `json:"last"`
-		UsdPx         string `json:"usdPx"`
-		DeltaBS       string `json:"deltaBS"`
-		DeltaPA       string `json:"deltaPA"`
-		GammaBS       string `json:"gammaBS"`
-		GammaPA       string `json:"gammaPA"`
-		ThetaBS       string `json:"thetaBS"`
-		ThetaPA       string `json:"thetaPA"`
-		VegaBS        string `json:"vegaBS"`
-		VegaPA        string `json:"vegaPA"`
-		SpotInUseAmt  string `json:"spotInUseAmt"`
-		ClSpotInUseAmt string `json:"clSpotInUseAmt"`
-		RealizedPnl   string `json:"realizedPnl"`
-		Pnl           string `json:"pnl"`
-		Fee           string `json:"fee"`
-		FundingFee    string `json:"fundingFee"`
-		LiqPenalty    string `json:"liqPenalty"`
-		CloseOrderAlgo []CloseOrderAlgoItem `json:"closeOrderAlgo"`
-		CTime         string `json:"cTime"`
-		UTime         string `json:"uTime"`
-		PTime         string `json:"pTime"`
-	} `json:"data"`
+	Code string         `json:"code"`
+	Msg  string         `json:"msg"`
+	Data []PositionData `json:"data"`
 }
 
 // CloseOrderAlgoItem 持仓关联的止盈止损订单 / Close order algo item attached to position
