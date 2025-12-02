@@ -64,6 +64,7 @@ func main() {
 		cfg.Database.WALMode,
 		cfg.Database.MaxOpenConns,
 		cfg.Database.MaxIdleConns,
+		cfg.Database.PositionExpirationMinutes,
 	)
 	if err != nil {
 		log.Error("Failed to initialize database: %v", err)
@@ -71,7 +72,7 @@ func main() {
 		return
 	}
 	defer db.Close()
-	log.Info("Database initialized successfully")
+	log.Info("Database initialized successfully (position expiration: %d minutes)", cfg.Database.PositionExpirationMinutes)
 
 	// Initialize OKX API client
 	log.Info("Initializing OKX API client")

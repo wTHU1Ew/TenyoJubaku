@@ -45,6 +45,13 @@ database:
   max_open_conns: 1
   max_idle_conns: 1
 
+  # Position record expiration time (minutes)
+  # Records older than this are considered stale/closed positions
+  # Recommended: 2x the maximum of (monitoring.interval, tpsl.check_interval) in seconds / 60
+  # Example: monitoring.interval=60s, tpsl.check_interval=300s → recommend 10 minutes
+  # Default: 10 minutes
+  position_expiration_minutes: 10
+
 # Logging Configuration
 logging:
   # Log file path

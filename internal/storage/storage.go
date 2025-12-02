@@ -13,7 +13,8 @@ import (
 
 // Storage 数据库存储层 / Database storage layer
 type Storage struct {
-	db *sql.DB
+	db                        *sql.DB
+	positionExpirationMinutes int
 }
 
 // New 创建新的存储实例 / Create new storage instance
@@ -25,13 +26,14 @@ type Storage struct {
 //   - walMode: Whether to enable WAL (Write-Ahead Logging) mode for better concurrency performance
 //   - maxOpenConns: Maximum number of open connections
 //   - maxIdleConns: Maximum number of idle connections
+//   - positionExpirationMinutes: Position record expiration time in minutes (records older than this are considered stale)
 //
 // Returns:
 //   - *Storage: 已初始化的存储实例，包含数据库连接和表结构
 //     Initialized storage instance with database connection and table schema
 //   - error: 数据库创建失败或表结构初始化失败时返回错误
 //     Error on database creation failure or schema initialization failure
-func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage, error) {
+func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns, positionExpirationMinutes int) (*Storage, error) {
 	// Ensure database directory exists
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0750); err != nil {
@@ -56,7 +58,10 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 		}
 	}
 
-	storage := &Storage{db: db}
+	storage := &Storage{
+		db:                        db,
+		positionExpirationMinutes: positionExpirationMinutes,
+	}
 
 	// Initialize database schema
 	if err := storage.initSchema(); err != nil {
@@ -270,9 +275,10 @@ func (s *Storage) GetLatestPositions() ([]models.Position, error) {
 		return nil, fmt.Errorf("failed to parse latest timestamp: %w", err)
 	}
 
-	// If latest snapshot is older than 10 minutes, consider all positions closed
+	// If latest snapshot is older than the configured expiration time, consider all positions closed
 	// This handles the case where monitoring detected no positions and didn't insert records
-	if time.Since(latestTime) > 10*time.Minute {
+	expirationDuration := time.Duration(s.positionExpirationMinutes) * time.Minute
+	if time.Since(latestTime) > expirationDuration {
 		return []models.Position{}, nil
 	}
 

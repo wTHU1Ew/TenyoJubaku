@@ -148,7 +148,7 @@ TPSL：跳过检查 ✅ 正确！
 
 ## 时间阈值的选择 / Threshold Selection
 
-### 为什么是 10 分钟？
+### 默认值：10 分钟
 
 **监控间隔**：60 秒（1 分钟）
 **TPSL 检查间隔**：300 秒（5 分钟）
@@ -172,17 +172,27 @@ T10 (10分钟后): TPSL 检查，最新记录是 T-1 (11分钟前)
 2. ✅ 足够容忍网络延迟和异常
 3. ✅ 不会太长，避免长时间错误
 
-### 可配置化（未来改进）
+### 可配置化（✅ 已实现）
 
-可以将阈值做成配置项：
+阈值已做成可配置项：
+
+**配置文件**: `configs/config.yaml`
 
 ```yaml
-storage:
+database:
   # 持仓记录过期时间（分钟）
   # Position record expiration time (minutes)
-  # Records older than this are considered stale
+  # Records older than this are considered stale/closed positions
+  # Recommended: 2x the maximum of (monitoring.interval, tpsl.check_interval) in seconds / 60
+  # Example: monitoring.interval=60s, tpsl.check_interval=300s → recommend 10 minutes
+  # Default: 10 minutes
   position_expiration_minutes: 10
 ```
+
+**实现位置**：
+- 配置定义：`internal/config/config.go` - `DatabaseConfig.PositionExpirationMinutes`
+- 存储使用：`internal/storage/storage.go` - `Storage.positionExpirationMinutes`
+- 应用启动：`cmd/main.go` - 传递配置值到 storage.New()
 
 ## 日志示例 / Log Examples
 
@@ -302,11 +312,12 @@ monitoring:
 ```
 
 需要相应调整阈值：
-```go
-if time.Since(latestTime) > 20*time.Minute {  // 改为 20 分钟
+```yaml
+database:
+  position_expiration_minutes: 20  # 改为 20 分钟
 ```
 
-**建议**：将阈值设为 `monitoring.interval × 2`
+**建议**：将阈值设为 `max(monitoring.interval, tpsl.check_interval) × 2 / 60`（转换为分钟）
 
 ### 3. 系统时间不同步
 
@@ -383,13 +394,7 @@ position_expiration_time >= max(monitoring.interval, tpsl.check_interval) × 2
 
 ## 未来改进 / Future Enhancements
 
-### 1. 可配置阈值
-```yaml
-storage:
-  position_expiration_minutes: 10
-```
-
-### 2. 添加日志说明
+### 1. 添加日志说明（未来改进）
 ```go
 if time.Since(latestTime) > threshold {
     s.logger.Debug("Latest position record is %.0f minutes old, considering all positions closed",
@@ -398,11 +403,21 @@ if time.Since(latestTime) > threshold {
 }
 ```
 
-### 3. 监控指标
+### 2. 监控指标（未来改进）
 添加 Prometheus 指标：
 ```go
 stale_position_checks_total{result="expired"}
 stale_position_checks_total{result="active"}
+```
+
+### 3. 自动计算推荐值（未来改进）
+根据监控间隔和 TPSL 检查间隔自动计算推荐的过期时间：
+```go
+recommendedExpiration := max(cfg.Monitoring.Interval, cfg.TPSL.CheckInterval) * 2 / 60
+if cfg.Database.PositionExpirationMinutes < recommendedExpiration {
+    log.Warn("position_expiration_minutes (%d) is less than recommended (%d)",
+        cfg.Database.PositionExpirationMinutes, recommendedExpiration)
+}
 ```
 
 ## 相关文档 / Related Documentation
