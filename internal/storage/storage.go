@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -108,6 +109,31 @@ func (s *Storage) initSchema() error {
 
 	if _, err := s.db.Exec(positionsSchema); err != nil {
 		return fmt.Errorf("failed to create positions table: %w", err)
+	}
+
+	// Create order_history table (Feature 3: Order Control)
+	orderHistorySchema := `
+	CREATE TABLE IF NOT EXISTS order_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		order_id TEXT NOT NULL,
+		inst_id TEXT NOT NULL,
+		side TEXT NOT NULL,
+		ord_type TEXT NOT NULL,
+		size TEXT NOT NULL,
+		price TEXT,
+		reduce_only BOOLEAN NOT NULL DEFAULT 0,
+		placed_at DATETIME NOT NULL,
+		week_start DATE NOT NULL,
+		status TEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_order_history_week_start ON order_history(week_start);
+	CREATE INDEX IF NOT EXISTS idx_order_history_order_id ON order_history(order_id);
+	CREATE INDEX IF NOT EXISTS idx_order_history_placed_at ON order_history(placed_at);
+	`
+
+	if _, err := s.db.Exec(orderHistorySchema); err != nil {
+		return fmt.Errorf("failed to create order_history table: %w", err)
 	}
 
 	return nil
@@ -351,4 +377,241 @@ func (s *Storage) Close() error {
 // HealthCheck 健康检查 / Health check for database connectivity
 func (s *Storage) HealthCheck() error {
 	return s.db.Ping()
+}
+
+// ============================================================================
+// Order History Methods (Phase 1B)
+// ============================================================================
+// TODO: Implement actual database operations for order history tracking
+// ============================================================================
+
+// InsertOrderHistory inserts an order history record into storage
+// 插入订单历史记录到数据库 / Insert order history record to database
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - order: Order history data model, must contain valid OrderID, InstId, Side, OrdType, Size fields
+//
+// Returns:
+//   - error: 数据验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
+func (s *Storage) InsertOrderHistory(ctx context.Context, order *models.OrderHistory) error {
+	if err := order.Validate(); err != nil {
+		return fmt.Errorf("invalid order history: %w", err)
+	}
+
+	query := `
+		INSERT INTO order_history (order_id, inst_id, side, ord_type, size, price, reduce_only, placed_at, week_start, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	result, err := s.db.ExecContext(ctx, query,
+		order.OrderID,
+		order.InstId,
+		order.Side,
+		order.OrdType,
+		order.Size,
+		order.Price,
+		order.ReduceOnly,
+		order.PlacedAt.UTC(),
+		order.WeekStart.UTC(),
+		order.Status,
+		order.CreatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert order history: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
+
+	order.ID = id
+	return nil
+}
+
+// GetOrderCountForWeek returns the count of orders placed in a given week
+// 获取指定周的订单数量 / Get order count for specified week
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - weekStart: Start of the week (Monday 00:00:00 UTC)
+//
+// Returns:
+//   - int: 该周的订单数量 / Order count for the week
+//   - error: 数据库查询失败时返回错误 / Error on database query failure
+func (s *Storage) GetOrderCountForWeek(ctx context.Context, weekStart time.Time) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM order_history
+		WHERE week_start = ?
+	`
+
+	var count int
+	err := s.db.QueryRowContext(ctx, query, weekStart.UTC()).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get order count for week: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetOrdersForWeek retrieves all orders placed in a given week
+// 获取指定周的所有订单 / Get all orders for specified week
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - weekStart: Start of the week (Monday 00:00:00 UTC)
+//
+// Returns:
+//   - []models.OrderHistory: 该周的订单列表，按下单时间排序 / Order list for the week, sorted by placed_at
+//   - error: 数据库查询失败时返回错误 / Error on database query failure
+func (s *Storage) GetOrdersForWeek(ctx context.Context, weekStart time.Time) ([]models.OrderHistory, error) {
+	query := `
+		SELECT id, order_id, inst_id, side, ord_type, size, price, reduce_only, placed_at, week_start, status, created_at
+		FROM order_history
+		WHERE week_start = ?
+		ORDER BY placed_at ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, weekStart.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("failed to query orders for week: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []models.OrderHistory
+	for rows.Next() {
+		var order models.OrderHistory
+		var placedAt, weekStartStr, createdAt string
+		var price sql.NullString
+
+		err := rows.Scan(
+			&order.ID,
+			&order.OrderID,
+			&order.InstId,
+			&order.Side,
+			&order.OrdType,
+			&order.Size,
+			&price,
+			&order.ReduceOnly,
+			&placedAt,
+			&weekStartStr,
+			&order.Status,
+			&createdAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan order: %w", err)
+		}
+
+		// Parse timestamps
+		order.PlacedAt, err = time.Parse(time.RFC3339, placedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse placed_at: %w", err)
+		}
+
+		order.WeekStart, err = time.Parse(time.RFC3339, weekStartStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse week_start: %w", err)
+		}
+
+		order.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse created_at: %w", err)
+		}
+
+		// Handle nullable price
+		if price.Valid {
+			order.Price = price.String
+		}
+
+		orders = append(orders, order)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return orders, nil
+}
+
+// GetWeeklyOrderStats retrieves aggregated order statistics for a week
+// 获取指定周的订单统计信息 / Get aggregated order statistics for specified week
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - weekStart: Start of the week (Monday 00:00:00 UTC)
+//
+// Returns:
+//   - *models.WeeklyOrderCount: 周订单统计数据 / Weekly order statistics
+//   - error: 数据库查询失败时返回错误 / Error on database query failure
+func (s *Storage) GetWeeklyOrderStats(ctx context.Context, weekStart time.Time) (*models.WeeklyOrderCount, error) {
+	query := `
+		SELECT
+			COUNT(*) as total_orders,
+			COALESCE(SUM(CASE WHEN reduce_only = 1 THEN 1 ELSE 0 END), 0) as reduce_only_orders,
+			COALESCE(SUM(CASE WHEN status = 'placed' THEN 1 ELSE 0 END), 0) as placed_orders,
+			COALESCE(SUM(CASE WHEN status = 'filled' THEN 1 ELSE 0 END), 0) as filled_orders,
+			COALESCE(SUM(CASE WHEN status = 'canceled' THEN 1 ELSE 0 END), 0) as canceled_orders,
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_orders
+		FROM order_history
+		WHERE week_start = ?
+	`
+
+	stats := &models.WeeklyOrderCount{
+		WeekStart: weekStart.UTC(),
+	}
+
+	err := s.db.QueryRowContext(ctx, query, weekStart.UTC()).Scan(
+		&stats.TotalOrders,
+		&stats.ReduceOnlyOrders,
+		&stats.PlacedOrders,
+		&stats.FilledOrders,
+		&stats.CanceledOrders,
+		&stats.FailedOrders,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get weekly order stats: %w", err)
+	}
+
+	// Calculate RegularOrders (Total - ReduceOnly)
+	stats.RegularOrders = stats.TotalOrders - stats.ReduceOnlyOrders
+
+	return stats, nil
+}
+
+// ============================================================================
+// Pending Confirmation Methods (Phase 1B)
+// ============================================================================
+// TODO: Implement actual database operations for pending confirmations
+// ============================================================================
+
+// InsertPendingConfirmation inserts a pending confirmation record
+func (s *Storage) InsertPendingConfirmation(ctx context.Context, conf *models.PendingConfirmation) error {
+	// TODO: Implement database INSERT
+	return fmt.Errorf("InsertPendingConfirmation not yet implemented")
+}
+
+// GetPendingConfirmationsDue retrieves confirmations that need checking
+func (s *Storage) GetPendingConfirmationsDue(ctx context.Context, now time.Time) ([]models.PendingConfirmation, error) {
+	// TODO: Implement database query with time filter
+	return nil, fmt.Errorf("GetPendingConfirmationsDue not yet implemented")
+}
+
+// GetPendingConfirmation retrieves a specific pending confirmation by order ID
+func (s *Storage) GetPendingConfirmation(ctx context.Context, orderID string) (*models.PendingConfirmation, error) {
+	// TODO: Implement database query by orderID
+	return nil, fmt.Errorf("GetPendingConfirmation not yet implemented")
+}
+
+// UpdatePendingConfirmation updates a pending confirmation record
+func (s *Storage) UpdatePendingConfirmation(ctx context.Context, orderID string, update *models.ConfirmationUpdate) error {
+	// TODO: Implement database UPDATE
+	return fmt.Errorf("UpdatePendingConfirmation not yet implemented")
+}
+
+// DeletePendingConfirmation removes a pending confirmation record
+func (s *Storage) DeletePendingConfirmation(ctx context.Context, orderID string) error {
+	// TODO: Implement database DELETE
+	return fmt.Errorf("DeletePendingConfirmation not yet implemented")
 }

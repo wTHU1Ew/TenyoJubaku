@@ -9,7 +9,9 @@ import (
 	"github.com/wTHU1Ew/TenyoJubaku/internal/config"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/logger"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/monitor"
+	"github.com/wTHU1Ew/TenyoJubaku/internal/notifier"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/okx"
+	"github.com/wTHU1Ew/TenyoJubaku/internal/ordercontrol"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/storage"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/tpsl"
 )
@@ -96,6 +98,36 @@ func main() {
 		log,
 		cfg.Monitoring.Interval,
 	)
+
+	// Initialize notifier (for Order Control alerts)
+	log.Info("Initializing notifier")
+	logNotifier := notifier.NewLogNotifier(log)
+
+	// Initialize Order Control service if enabled
+	// Note: Order Control service is not a background service, it's used by other components
+	// when placing orders. For now, we just initialize it and log its configuration.
+	// TODO: Integrate Order Control with TPSL or other order-placing components
+	if cfg.OrderControl.Enabled {
+		log.Info("Initializing Order Control service")
+		log.Info("Frequency limit: enabled=%v, weekly_max_orders=%d, exclude_reduce_only=%v",
+			cfg.OrderControl.FrequencyLimit.Enabled,
+			cfg.OrderControl.FrequencyLimit.WeeklyMaxOrders,
+			cfg.OrderControl.FrequencyLimit.ExcludeReduceOnly)
+		log.Info("Maker-only: enabled=%v, min_price_distance_pct=%.2f%%",
+			cfg.OrderControl.MakerOnly.Enabled,
+			cfg.OrderControl.MakerOnly.MinPriceDistancePct)
+
+		_ = ordercontrol.New(
+			&cfg.OrderControl,
+			okxClient,
+			db,
+			logNotifier,
+			log,
+		)
+		log.Info("Order Control service initialized (ready for integration)")
+	} else {
+		log.Info("Order Control disabled in configuration")
+	}
 
 	// Initialize TPSL scheduler if enabled
 	var tpslScheduler *tpsl.Scheduler

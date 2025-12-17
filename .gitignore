@@ -46,3 +46,8 @@ logs/
 # Temporary files
 tmp/
 temp/
+configs/config.yaml
+OkxWatching.pem
+
+# Deployment guides (contains server-specific info)
+AWS_MIGRATION_GUIDE.md

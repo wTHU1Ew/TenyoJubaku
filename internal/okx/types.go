@@ -194,3 +194,111 @@ type TickerData struct {
 	SodUtc0   string `json:"sodUtc0"`   // Open price at UTC 0
 	SodUtc8   string `json:"sodUtc8"`   // Open price at UTC 8
 }
+
+// OrderRequest OKX订单请求 / OKX order request (for regular orders)
+type OrderRequest struct {
+	InstId     string `json:"instId"`               // Instrument ID
+	TdMode     string `json:"tdMode"`               // Trade mode: cash, cross, isolated
+	Side       string `json:"side"`                 // Order side: buy, sell
+	OrdType    string `json:"ordType"`              // Order type: market, limit, post_only, fok, ioc
+	Sz         string `json:"sz"`                   // Order size
+	Px         string `json:"px,omitempty"`         // Order price (required for limit orders)
+	PosSide    string `json:"posSide,omitempty"`    // Position side: long, short, net
+	ReduceOnly bool   `json:"reduceOnly,omitempty"` // Whether the order reduces position only
+	TgtCcy     string `json:"tgtCcy,omitempty"`     // Order quantity unit: base_ccy, quote_ccy
+}
+
+// OrderResponse OKX订单响应 / OKX order response
+type OrderResponse struct {
+	Code string `json:"code"`
+	Msg  string `json:"msg"`
+	Data []struct {
+		OrdId   string `json:"ordId"`   // Order ID
+		ClOrdId string `json:"clOrdId"` // Client order ID
+		Tag     string `json:"tag"`     // Order tag
+		SCode   string `json:"sCode"`   // Order-specific error code
+		SMsg    string `json:"sMsg"`    // Order-specific error message
+	} `json:"data"`
+}
+
+// AmendOrderRequest OKX修改订单请求 / OKX amend order request
+type AmendOrderRequest struct {
+	InstId    string `json:"instId"`              // Instrument ID
+	OrdId     string `json:"ordId,omitempty"`     // Order ID
+	ClOrdId   string `json:"clOrdId,omitempty"`   // Client order ID
+	NewSz     string `json:"newSz,omitempty"`     // New order size
+	NewPx     string `json:"newPx,omitempty"`     // New order price
+	CxlOnFail bool   `json:"cxlOnFail,omitempty"` // Whether to cancel on amendment failure
+}
+
+// AmendOrderResponse OKX修改订单响应 / OKX amend order response
+type AmendOrderResponse struct {
+	Code string `json:"code"`
+	Msg  string `json:"msg"`
+	Data []struct {
+		OrdId   string `json:"ordId"`   // Order ID
+		ClOrdId string `json:"clOrdId"` // Client order ID
+		ReqId   string `json:"reqId"`   // Request ID
+		SCode   string `json:"sCode"`   // Order-specific error code
+		SMsg    string `json:"sMsg"`    // Order-specific error message
+	} `json:"data"`
+}
+
+// CancelOrderRequest OKX撤销订单请求 / OKX cancel order request
+type CancelOrderRequest struct {
+	InstId  string `json:"instId"`            // Instrument ID
+	OrdId   string `json:"ordId,omitempty"`   // Order ID
+	ClOrdId string `json:"clOrdId,omitempty"` // Client order ID
+}
+
+// CancelOrderResponse OKX撤销订单响应 / OKX cancel order response
+type CancelOrderResponse struct {
+	Code string `json:"code"`
+	Msg  string `json:"msg"`
+	Data []struct {
+		OrdId   string `json:"ordId"`   // Order ID
+		ClOrdId string `json:"clOrdId"` // Client order ID
+		SCode   string `json:"sCode"`   // Order-specific error code
+		SMsg    string `json:"sMsg"`    // Order-specific error message
+	} `json:"data"`
+}
+
+// PendingOrdersResponse OKX待处理订单响应 / OKX pending orders response
+type PendingOrdersResponse struct {
+	Code string      `json:"code"`
+	Msg  string      `json:"msg"`
+	Data []OrderData `json:"data"`
+}
+
+// OrderData OKX订单数据 / OKX order data
+type OrderData struct {
+	InstId      string `json:"instId"`      // Instrument ID
+	OrdId       string `json:"ordId"`       // Order ID
+	ClOrdId     string `json:"clOrdId"`     // Client order ID
+	Tag         string `json:"tag"`         // Order tag
+	Px          string `json:"px"`          // Order price
+	Sz          string `json:"sz"`          // Order size
+	OrdType     string `json:"ordType"`     // Order type
+	Side        string `json:"side"`        // Order side
+	PosSide     string `json:"posSide"`     // Position side
+	TdMode      string `json:"tdMode"`      // Trade mode
+	AccFillSz   string `json:"accFillSz"`   // Accumulated fill size
+	FillPx      string `json:"fillPx"`      // Last fill price
+	TradeId     string `json:"tradeId"`     // Last trade ID
+	FillSz      string `json:"fillSz"`      // Last fill size
+	FillTime    string `json:"fillTime"`    // Last fill time
+	State       string `json:"state"`       // Order state: live, partially_filled, etc.
+	AvgPx       string `json:"avgPx"`       // Average fill price
+	Lever       string `json:"lever"`       // Leverage
+	TpTriggerPx string `json:"tpTriggerPx"` // TP trigger price
+	TpOrdPx     string `json:"tpOrdPx"`     // TP order price
+	SlTriggerPx string `json:"slTriggerPx"` // SL trigger price
+	SlOrdPx     string `json:"slOrdPx"`     // SL order price
+	Fee         string `json:"fee"`         // Fee
+	FeeCcy      string `json:"feeCcy"`      // Fee currency
+	Rebate      string `json:"rebate"`      // Rebate
+	RebateCcy   string `json:"rebateCcy"`   // Rebate currency
+	ReduceOnly  string `json:"reduceOnly"`  // Whether reduce-only order
+	CTime       string `json:"cTime"`       // Creation time
+	UTime       string `json:"uTime"`       // Update time
+}

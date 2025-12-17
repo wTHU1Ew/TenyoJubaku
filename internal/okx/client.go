@@ -1,6 +1,7 @@
 package okx
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -111,8 +112,8 @@ func (c *Client) generateSignature(timestamp, method, requestPath, body string) 
 //   - []byte: API响应的原始字节数据 / Raw byte data from API response
 //   - error: 请求失败时返回错误（所有重试均失败后）/ Error on request failure (after all retries exhausted)
 //     包含最后一次失败的具体原因 / Contains reason for the last failure
-func (c *Client) doRequest(method, path string) ([]byte, error) {
-	return c.doRequestWithBody(method, path, "")
+func (c *Client) doRequest(ctx context.Context, method, path string) ([]byte, error) {
+	return c.doRequestWithBody(ctx, method, path, "")
 }
 
 // doRequestWithBody 执行带请求体的HTTP请求 / Execute HTTP request with body
@@ -127,15 +128,25 @@ func (c *Client) doRequest(method, path string) ([]byte, error) {
 // Returns:
 //   - []byte: API响应的原始字节数据 / Raw byte data from API response
 //   - error: 请求失败时返回错误（所有重试均失败后）/ Error on request failure (after all retries exhausted)
-func (c *Client) doRequestWithBody(method, path, body string) ([]byte, error) {
+func (c *Client) doRequestWithBody(ctx context.Context, method, path, body string) ([]byte, error) {
 	url := c.apiURL + path
 
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("request canceled: %w", ctx.Err())
+		default:
+		}
 		if attempt > 0 {
 			// Exponential backoff: 1s, 2s, 4s
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("request canceled during backoff: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 		}
 
 		// Generate timestamp (ISO8601 format)
@@ -149,7 +160,7 @@ func (c *Client) doRequestWithBody(method, path, body string) ([]byte, error) {
 		if body != "" {
 			reqBody = strings.NewReader(body)
 		}
-		req, err := http.NewRequest(method, url, reqBody)
+		req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to create request: %w", err)
 			continue
@@ -220,10 +231,10 @@ func (c *Client) doRequestWithBody(method, path, body string) ([]byte, error) {
 //   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
 //     可能原因包括: 网络错误、认证失败、API错误码非"0"
 //     Possible causes: network error, authentication failure, API error code not "0"
-func (c *Client) GetAccountBalance() (*AccountBalanceResponse, error) {
+func (c *Client) GetAccountBalance(ctx context.Context) (*AccountBalanceResponse, error) {
 	path := "/api/v5/account/balance"
 
-	respBody, err := c.doRequest("GET", path)
+	respBody, err := c.doRequest(ctx, "GET", path)
 	if err != nil {
 		return nil, err
 	}
@@ -254,10 +265,10 @@ func (c *Client) GetAccountBalance() (*AccountBalanceResponse, error) {
 //   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
 //     可能原因包括: 网络错误、认证失败、API错误码非"0"
 //     Possible causes: network error, authentication failure, API error code not "0"
-func (c *Client) GetPositions() (*PositionsResponse, error) {
+func (c *Client) GetPositions(ctx context.Context) (*PositionsResponse, error) {
 	path := "/api/v5/account/positions"
 
-	respBody, err := c.doRequest("GET", path)
+	respBody, err := c.doRequest(ctx, "GET", path)
 	if err != nil {
 		return nil, err
 	}
@@ -283,8 +294,8 @@ func (c *Client) GetPositions() (*PositionsResponse, error) {
 // Returns:
 //   - error: 连接失败或认证失败时返回错误 / Error on connection failure or authentication failure
 //     nil表示API连接正常，认证通过 / nil indicates API is reachable and authenticated
-func (c *Client) HealthCheck() error {
-	_, err := c.GetAccountBalance()
+func (c *Client) HealthCheck(ctx context.Context) error {
+	_, err := c.GetAccountBalance(ctx)
 	return err
 }
 
@@ -303,10 +314,10 @@ func (c *Client) HealthCheck() error {
 //   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
 //     可能原因包括: 网络错误、认证失败、API错误码非"0"
 //     Possible causes: network error, authentication failure, API error code not "0"
-func (c *Client) GetPendingAlgoOrders(ordType string) (*PendingAlgoOrdersResponse, error) {
+func (c *Client) GetPendingAlgoOrders(ctx context.Context, ordType string) (*PendingAlgoOrdersResponse, error) {
 	path := "/api/v5/trade/orders-algo-pending?ordType=" + ordType
 
-	respBody, err := c.doRequest("GET", path)
+	respBody, err := c.doRequest(ctx, "GET", path)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +352,7 @@ func (c *Client) GetPendingAlgoOrders(ordType string) (*PendingAlgoOrdersRespons
 //   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
 //     可能原因包括: 网络错误、认证失败、API错误码非"0"、参数错误
 //     Possible causes: network error, authentication failure, API error code not "0", invalid parameters
-func (c *Client) PlaceAlgoOrder(req AlgoOrderRequest) (*AlgoOrderResponse, error) {
+func (c *Client) PlaceAlgoOrder(ctx context.Context, req AlgoOrderRequest) (*AlgoOrderResponse, error) {
 	path := "/api/v5/trade/order-algo"
 
 	// Marshal request to JSON
@@ -350,7 +361,7 @@ func (c *Client) PlaceAlgoOrder(req AlgoOrderRequest) (*AlgoOrderResponse, error
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	respBody, err := c.doRequestWithBody("POST", path, string(reqBody))
+	respBody, err := c.doRequestWithBody(ctx, "POST", path, string(reqBody))
 	if err != nil {
 		return nil, err
 	}
@@ -388,10 +399,10 @@ func (c *Client) PlaceAlgoOrder(req AlgoOrderRequest) (*AlgoOrderResponse, error
 //   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
 //     可能原因包括: 网络错误、认证失败、API错误码非"0"、交易对不存在
 //     Possible causes: network error, authentication failure, API error code not "0", invalid instrument
-func (c *Client) GetTicker(instId string) (*TickerResponse, error) {
+func (c *Client) GetTicker(ctx context.Context, instId string) (*TickerResponse, error) {
 	path := fmt.Sprintf("/api/v5/market/ticker?instId=%s", instId)
 
-	respBody, err := c.doRequest("GET", path)
+	respBody, err := c.doRequest(ctx, "GET", path)
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +414,130 @@ func (c *Client) GetTicker(instId string) (*TickerResponse, error) {
 	}
 
 	// Check for API error
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}
+
+// PlaceOrder places a regular order on the exchange
+// Used for opening new positions or closing existing positions
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - req: Order request with order parameters (instrument, side, type, size, price, etc.)
+//
+// Returns the order response with ordId (order ID) on success.
+// Returns error on API request failure, authentication failure, or invalid parameters.
+func (c *Client) PlaceOrder(ctx context.Context, req *OrderRequest) (*OrderResponse, error) {
+	path := "/api/v5/trade/order"
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	respBody, err := c.doRequestWithBody(ctx, "POST", path, string(reqBody))
+	if err != nil {
+		return nil, err
+	}
+
+	var resp OrderResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}
+
+// AmendOrder modifies an existing pending order
+// Can change order size and/or price for pending orders
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - req: Amend order request with orderId and new parameters
+//
+// Returns the amended order response.
+// Returns error on API request failure or if order cannot be amended.
+func (c *Client) AmendOrder(ctx context.Context, req *AmendOrderRequest) (*AmendOrderResponse, error) {
+	path := "/api/v5/trade/amend-order"
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	respBody, err := c.doRequestWithBody(ctx, "POST", path, string(reqBody))
+	if err != nil {
+		return nil, err
+	}
+
+	var resp AmendOrderResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}
+
+// CancelOrder cancels an existing pending order
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - req: Cancel order request with orderId
+//
+// Returns the cancellation response.
+// Returns error on API request failure or if order cannot be canceled.
+func (c *Client) CancelOrder(ctx context.Context, req *CancelOrderRequest) (*CancelOrderResponse, error) {
+	path := "/api/v5/trade/cancel-order"
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	respBody, err := c.doRequestWithBody(ctx, "POST", path, string(reqBody))
+	if err != nil {
+		return nil, err
+	}
+
+	var resp CancelOrderResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}
+
+// GetPendingOrders retrieves all pending orders (not algo orders)
+// Returns orders that are placed but not yet filled or canceled
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//
+// Returns error on API request failure or response parsing failure.
+func (c *Client) GetPendingOrders(ctx context.Context) (*PendingOrdersResponse, error) {
+	path := "/api/v5/trade/orders-pending"
+	respBody, err := c.doRequest(ctx, "GET", path)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp PendingOrdersResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
 	if resp.Code != "0" {
 		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
 	}

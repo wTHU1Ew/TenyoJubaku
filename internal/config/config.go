@@ -10,11 +10,12 @@ import (
 
 // Config 配置结构 / Configuration structure
 type Config struct {
-	OKX        OKXConfig        `yaml:"okx"`
-	Monitoring MonitoringConfig `yaml:"monitoring"`
-	Database   DatabaseConfig   `yaml:"database"`
-	Logging    LoggingConfig    `yaml:"logging"`
-	TPSL       TPSLConfig       `yaml:"tpsl"`
+	OKX          OKXConfig          `yaml:"okx"`
+	Monitoring   MonitoringConfig   `yaml:"monitoring"`
+	Database     DatabaseConfig     `yaml:"database"`
+	Logging      LoggingConfig      `yaml:"logging"`
+	TPSL         TPSLConfig         `yaml:"tpsl"`
+	OrderControl OrderControlConfig `yaml:"order_control"`
 }
 
 // OKXConfig OKX API配置 / OKX API configuration
@@ -59,6 +60,97 @@ type TPSLConfig struct {
 	CheckInterval   int     `yaml:"check_interval"`
 	VolatilityPct   float64 `yaml:"volatility_pct"`
 	ProfitLossRatio float64 `yaml:"profit_loss_ratio"`
+}
+
+// OrderControlConfig Order Control配置 / Order Control configuration (Feature 3)
+type OrderControlConfig struct {
+	// Enabled 是否启用订单控制 / Whether to enable order control
+	Enabled bool `yaml:"enabled"`
+
+	// FrequencyLimit 订单频率限制配置 / Order frequency limit configuration
+	FrequencyLimit FrequencyLimitConfig `yaml:"frequency_limit"`
+
+	// MakerOnly Maker-only订单配置 / Maker-only order configuration
+	MakerOnly MakerOnlyConfig `yaml:"maker_only"`
+
+	// Confirmation 订单确认配置 / Order confirmation configuration
+	Confirmation ConfirmationConfig `yaml:"confirmation"`
+}
+
+// FrequencyLimitConfig 订单频率限制配置 / Order frequency limit configuration
+type FrequencyLimitConfig struct {
+	// Enabled 是否启用频率限制 / Whether to enable frequency limit
+	Enabled bool `yaml:"enabled"`
+
+	// WeeklyMaxOrders 每周最大订单数 / Maximum orders per week
+	WeeklyMaxOrders int `yaml:"weekly_max_orders"`
+
+	// ExcludeReduceOnly 是否排除reduce-only订单 / Whether to exclude reduce-only orders
+	// 如果为true，reduce-only订单不计入频率限制
+	// If true, reduce-only orders do not count towards frequency limit
+	ExcludeReduceOnly bool `yaml:"exclude_reduce_only"`
+}
+
+// MakerOnlyConfig Maker-only订单配置 / Maker-only order configuration
+type MakerOnlyConfig struct {
+	// Enabled 是否启用maker-only限制 / Whether to enable maker-only restriction
+	Enabled bool `yaml:"enabled"`
+
+	// MinPriceDistancePct 最小价格距离百分比 / Minimum price distance percentage
+	// 订单价格与市场价格的最小距离，例如0.001表示0.1%
+	// Minimum distance between order price and market price, e.g., 0.001 for 0.1%
+	MinPriceDistancePct float64 `yaml:"min_price_distance_pct"`
+
+	// AllowTakerForReduceOnly 是否允许reduce-only订单使用taker / Allow taker for reduce-only orders
+	// 如果为true，reduce-only订单可以使用market订单类型
+	// If true, reduce-only orders can use market order type
+	AllowTakerForReduceOnly bool `yaml:"allow_taker_for_reduce_only"`
+
+	// MaxTakerPct 允许的最大taker订单百分比 / Maximum taker order percentage
+	// reduce-only订单中允许的最大taker订单比例
+	// Maximum percentage of taker orders allowed for reduce-only orders
+	MaxTakerPct float64 `yaml:"max_taker_pct"`
+
+	// TickerStalenessSeconds 行情过期时间（秒）/ Ticker staleness threshold (seconds)
+	// 超过此时间的行情数据被视为过期
+	// Ticker data older than this is considered stale
+	TickerStalenessSeconds int `yaml:"ticker_staleness_seconds"`
+}
+
+// ConfirmationConfig 订单确认配置 / Order confirmation configuration
+type ConfirmationConfig struct {
+	// Enabled 是否启用确认机制 / Whether to enable confirmation mechanism
+	Enabled bool `yaml:"enabled"`
+
+	// CheckIntervalSeconds 确认检查间隔（秒）/ Confirmation check interval (seconds)
+	// 检查待确认订单的频率
+	// Frequency of checking pending confirmations
+	CheckIntervalSeconds int `yaml:"check_interval_seconds"`
+
+	// ConfirmationIntervalHours 确认间隔（小时）/ Confirmation interval (hours)
+	// 每隔多少小时需要一次确认
+	// How often confirmation is required
+	ConfirmationIntervalHours int `yaml:"confirmation_interval_hours"`
+
+	// WaitingPeriodHours 等待期（小时）/ Waiting period (hours)
+	// 第一次确认请求之前的等待时间
+	// Waiting time before first confirmation request
+	WaitingPeriodHours int `yaml:"waiting_period_hours"`
+
+	// TimeoutSizeReductionPct 超时后的规模减少百分比 / Size reduction percentage on timeout
+	// 例如0.1表示每次超时减少10%的订单规模
+	// E.g., 0.1 means reduce order size by 10% on each timeout
+	TimeoutSizeReductionPct float64 `yaml:"timeout_size_reduction_pct"`
+
+	// MaxTimeouts 最大超时次数 / Maximum number of timeouts
+	// 超过此次数后撤销订单
+	// Cancel order after exceeding this count
+	MaxTimeouts int `yaml:"max_timeouts"`
+
+	// NotificationMethod 通知方式 / Notification method
+	// 可选值: "log", "email", "telegram" 等
+	// Options: "log", "email", "telegram", etc.
+	NotificationMethod string `yaml:"notification_method"`
 }
 
 // Load 加载配置文件 / Load configuration from file
@@ -191,6 +283,59 @@ func (c *Config) Validate() error {
 	}
 	if c.TPSL.CheckInterval <= 0 {
 		return fmt.Errorf("tpsl.check_interval must be positive, got %d", c.TPSL.CheckInterval)
+	}
+
+	// Validate Order Control configuration (only if enabled)
+	if c.OrderControl.Enabled {
+		// Validate Frequency Limit
+		if c.OrderControl.FrequencyLimit.Enabled {
+			if c.OrderControl.FrequencyLimit.WeeklyMaxOrders <= 0 {
+				c.OrderControl.FrequencyLimit.WeeklyMaxOrders = 20 // Default
+			}
+		}
+
+		// Validate Maker-Only
+		if c.OrderControl.MakerOnly.Enabled {
+			if c.OrderControl.MakerOnly.MinPriceDistancePct <= 0 {
+				c.OrderControl.MakerOnly.MinPriceDistancePct = 0.001 // Default 0.1%
+			}
+			if c.OrderControl.MakerOnly.MinPriceDistancePct > 1.0 {
+				return fmt.Errorf("order_control.maker_only.min_price_distance_pct must be <= 1.0, got %f", c.OrderControl.MakerOnly.MinPriceDistancePct)
+			}
+			if c.OrderControl.MakerOnly.MaxTakerPct < 0 || c.OrderControl.MakerOnly.MaxTakerPct > 1.0 {
+				return fmt.Errorf("order_control.maker_only.max_taker_pct must be between 0 and 1, got %f", c.OrderControl.MakerOnly.MaxTakerPct)
+			}
+			if c.OrderControl.MakerOnly.TickerStalenessSeconds <= 0 {
+				c.OrderControl.MakerOnly.TickerStalenessSeconds = 60 // Default 60 seconds
+			}
+		}
+
+		// Validate Confirmation
+		if c.OrderControl.Confirmation.Enabled {
+			if c.OrderControl.Confirmation.CheckIntervalSeconds <= 0 {
+				c.OrderControl.Confirmation.CheckIntervalSeconds = 3600 // Default 1 hour
+			}
+			if c.OrderControl.Confirmation.ConfirmationIntervalHours <= 0 {
+				c.OrderControl.Confirmation.ConfirmationIntervalHours = 24 // Default 24 hours
+			}
+			if c.OrderControl.Confirmation.WaitingPeriodHours < 0 {
+				c.OrderControl.Confirmation.WaitingPeriodHours = 48 // Default 48 hours
+			}
+			if c.OrderControl.Confirmation.TimeoutSizeReductionPct <= 0 || c.OrderControl.Confirmation.TimeoutSizeReductionPct > 1.0 {
+				return fmt.Errorf("order_control.confirmation.timeout_size_reduction_pct must be between 0 and 1, got %f", c.OrderControl.Confirmation.TimeoutSizeReductionPct)
+			}
+			if c.OrderControl.Confirmation.MaxTimeouts <= 0 {
+				c.OrderControl.Confirmation.MaxTimeouts = 3 // Default 3 timeouts
+			}
+			if c.OrderControl.Confirmation.NotificationMethod == "" {
+				c.OrderControl.Confirmation.NotificationMethod = "log" // Default to log
+			}
+			// Validate notification method
+			validMethods := map[string]bool{"log": true, "email": true, "telegram": true}
+			if !validMethods[c.OrderControl.Confirmation.NotificationMethod] {
+				return fmt.Errorf("invalid notification method: %s (must be log, email, or telegram)", c.OrderControl.Confirmation.NotificationMethod)
+			}
+		}
 	}
 
 	return nil

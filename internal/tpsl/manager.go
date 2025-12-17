@@ -1,6 +1,7 @@
 package tpsl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
@@ -76,7 +77,8 @@ func (m *Manager) AnalyzeAndPlaceTPSL(positions []*models.Position) (*CoverageSu
 	m.logger.Info("Starting TPSL analysis for %d positions", len(positions))
 
 	// Query pending algo orders
-	algoOrders, err := m.okxClient.GetPendingAlgoOrders("conditional")
+	ctx := context.Background()
+	algoOrders, err := m.okxClient.GetPendingAlgoOrders(ctx, "conditional")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pending algo orders: %w", err)
 	}
@@ -419,7 +421,9 @@ func trimTrailingZeros(s string) string {
 //   - error: 获取失败时返回错误 / Error on failure
 func (m *Manager) getCurrentMarketPrice(instId string) (float64, error) {
 	// Query OKX ticker API
-	resp, err := m.okxClient.GetTicker(instId)
+	ctx := context.Background()
+
+	resp, err := m.okxClient.GetTicker(ctx, instId)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get ticker for %s: %w", instId, err)
 	}
@@ -596,7 +600,10 @@ func (m *Manager) placeTPSLOrderWithValidation(position *models.Position, size f
 
 		m.logger.Debug("Placing Take-Profit order for %s (%s): TP=%.8f", position.Instrument, position.PositionSide, adjustedPrices.TpPrice)
 
-		tpResp, err := m.okxClient.PlaceAlgoOrder(tpReq)
+		ctx := context.Background()
+
+
+		tpResp, err := m.okxClient.PlaceAlgoOrder(ctx, tpReq)
 		if err != nil {
 			return fmt.Errorf("Take-Profit order failed: %w", err)
 		}
@@ -627,7 +634,10 @@ func (m *Manager) placeTPSLOrderWithValidation(position *models.Position, size f
 
 		m.logger.Debug("Placing Stop-Loss order for %s (%s): SL=%.8f", position.Instrument, position.PositionSide, adjustedPrices.SlPrice)
 
-		slResp, err := m.okxClient.PlaceAlgoOrder(slReq)
+		ctx := context.Background()
+
+
+		slResp, err := m.okxClient.PlaceAlgoOrder(ctx, slReq)
 		if err != nil {
 			if tpAlgoId != "" {
 				m.logger.Error("Stop-Loss order failed (TP order %s was placed): %v", tpAlgoId, err)
@@ -687,7 +697,10 @@ func (m *Manager) placeTPSLOrderOriginal(position *models.Position, size float64
 		ReduceOnly:      true,
 	}
 
-	tpResp, err := m.okxClient.PlaceAlgoOrder(tpReq)
+	ctx := context.Background()
+
+
+	tpResp, err := m.okxClient.PlaceAlgoOrder(ctx, tpReq)
 	if err != nil {
 		return fmt.Errorf("Take-Profit order failed: %w", err)
 	}
@@ -712,7 +725,7 @@ func (m *Manager) placeTPSLOrderOriginal(position *models.Position, size float64
 		ReduceOnly:      true,
 	}
 
-	slResp, err := m.okxClient.PlaceAlgoOrder(slReq)
+	slResp, err := m.okxClient.PlaceAlgoOrder(ctx, slReq)
 	if err != nil {
 		return fmt.Errorf("Stop-Loss order failed: %w", err)
 	}

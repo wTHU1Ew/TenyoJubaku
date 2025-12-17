@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
@@ -101,7 +102,9 @@ func (m *Monitor) healthCheck() error {
 	m.logger.Info("Performing health check...")
 
 	// Check OKX API connectivity
-	if err := m.okxClient.HealthCheck(); err != nil {
+	ctx := context.Background()
+
+	if err := m.okxClient.HealthCheck(ctx); err != nil {
 		m.logger.Error("OKX API health check failed: %v", err)
 		return fmt.Errorf("OKX API health check failed: %w", err)
 	}
@@ -152,7 +155,9 @@ func (m *Monitor) fetchAndStoreBalances() error {
 	m.logger.Debug("Fetching account balances from OKX API...")
 
 	// Fetch balances from OKX API
-	resp, err := m.okxClient.GetAccountBalance()
+	ctx := context.Background()
+
+	resp, err := m.okxClient.GetAccountBalance(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get account balance: %w", err)
 	}
@@ -244,7 +249,9 @@ func (m *Monitor) fetchAndStorePositions() error {
 	m.logger.Debug("Fetching positions from OKX API...")
 
 	// Fetch positions from OKX API
-	resp, err := m.okxClient.GetPositions()
+	ctx := context.Background()
+
+	resp, err := m.okxClient.GetPositions(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get positions: %w", err)
 	}

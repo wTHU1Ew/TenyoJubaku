@@ -112,7 +112,8 @@ func (s *Scheduler) runCheck() {
 
 	// Fetch current positions directly from OKX API (real-time data)
 	s.logger.Info("Fetching positions from OKX API...")
-	positionsResp, err := s.okxClient.GetPositions()
+	ctx := context.Background()
+	positionsResp, err := s.okxClient.GetPositions(ctx)
 	if err != nil {
 		s.logger.Error("Failed to fetch positions from OKX API: %v", err)
 		return
