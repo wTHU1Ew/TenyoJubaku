@@ -46,10 +46,17 @@ logs/
 # Temporary files
 tmp/
 temp/
-configs/config.yaml
-OkxWatching.pem
 
-# Deployment guides and scripts (contains server-specific info)
-AWS_MIGRATION_GUIDE.md
+# Build artifacts in root directory
+tenyojubaku
+tenyojubaku-cli
+
+# Debug files
+debug/
+debug_tpsl.sh
+
+# Infrastructure documentation (contains server IPs and deployment details)
+docs/features/infrastructure/
+
+# Deployment scripts (contains server-specific info)
 deploy_ec2.sh
-DEPLOY_README.md
