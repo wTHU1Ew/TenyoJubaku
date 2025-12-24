@@ -23,6 +23,10 @@ configs/config.yaml
 configs/*.yaml
 !configs/config.template.yaml
 
+# Private keys and certificates
+*.pem
+OkxWatching.pem
+
 # Database files
 data/
 *.db
