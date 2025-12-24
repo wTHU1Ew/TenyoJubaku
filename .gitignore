@@ -49,5 +49,7 @@ temp/
 configs/config.yaml
 OkxWatching.pem
 
-# Deployment guides (contains server-specific info)
+# Deployment guides and scripts (contains server-specific info)
 AWS_MIGRATION_GUIDE.md
+deploy_ec2.sh
+DEPLOY_README.md

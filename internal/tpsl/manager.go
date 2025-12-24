@@ -140,10 +140,12 @@ func (m *Manager) AnalyzeAndPlaceTPSL(positions []*models.Position) (*CoverageSu
 // Calculate uncovered size of position
 //
 // 修改说明 / Modification Note:
-// 由于TP和SL现在是两个独立的订单，我们需要检查是否同时存在TP和SL订单。
-// 只有同时有TP和SL的部分才算完全覆盖。
-// Since TP and SL are now two separate orders, we need to check if both TP and SL exist.
-// Only the portion covered by BOTH TP and SL orders is considered fully covered.
+// 1. 由于TP和SL现在是两个独立的订单，我们需要检查是否同时存在TP和SL订单。
+//    只有同时有TP和SL的部分才算完全覆盖。
+// 2. 累加所有匹配订单的size，而不是只取最大值，以支持多个TPSL订单共同覆盖仓位。
+// 1. Since TP and SL are now two separate orders, we need to check if both TP and SL exist.
+//    Only the portion covered by BOTH TP and SL orders is considered fully covered.
+// 2. Accumulate sizes from all matching orders instead of taking max, to support multiple TPSL orders covering the position.
 //
 // Parameters:
 //   - position: 持仓信息 / Position information
@@ -152,8 +154,8 @@ func (m *Manager) AnalyzeAndPlaceTPSL(positions []*models.Position) (*CoverageSu
 // Returns:
 //   - float64: 未覆盖的持仓大小 / Uncovered position size
 func (m *Manager) analyzeCoverage(position *models.Position, algoOrders []okx.AlgoOrder) float64 {
-	maxTpSize := 0.0
-	maxSlSize := 0.0
+	totalTpSize := 0.0
+	totalSlSize := 0.0
 	tpCount := 0
 	slCount := 0
 
@@ -174,17 +176,13 @@ func (m *Manager) analyzeCoverage(position *models.Position, algoOrders []okx.Al
 
 			if hasTp {
 				tpCount++
-				if size > maxTpSize {
-					maxTpSize = size
-				}
+				totalTpSize += size // Accumulate all TP order sizes
 				m.logger.Debug("Found Take-Profit order %s with size %.8f for position %s",
 					order.AlgoId, size, position.Instrument)
 			}
 			if hasSl {
 				slCount++
-				if size > maxSlSize {
-					maxSlSize = size
-				}
+				totalSlSize += size // Accumulate all SL order sizes
 				m.logger.Debug("Found Stop-Loss order %s with size %.8f for position %s",
 					order.AlgoId, size, position.Instrument)
 			}
@@ -195,12 +193,12 @@ func (m *Manager) analyzeCoverage(position *models.Position, algoOrders []okx.Al
 	// If either TP or SL is missing, the position is not properly covered
 	coveredSize := 0.0
 	if tpCount > 0 && slCount > 0 {
-		// Use the minimum of TP and SL sizes (conservative approach)
+		// Use the minimum of total TP and SL sizes (conservative approach)
 		// because only the portion covered by BOTH is truly protected
-		if maxTpSize < maxSlSize {
-			coveredSize = maxTpSize
+		if totalTpSize < totalSlSize {
+			coveredSize = totalTpSize
 		} else {
-			coveredSize = maxSlSize
+			coveredSize = totalSlSize
 		}
 	} else if tpCount > 0 {
 		m.logger.Warn("Position %s has TP orders but NO SL orders - not considered covered!", position.Instrument)
@@ -214,7 +212,7 @@ func (m *Manager) analyzeCoverage(position *models.Position, algoOrders []okx.Al
 	}
 
 	m.logger.Info("Position %s coverage: total=%.8f, TP_covered=%.8f (count:%d), SL_covered=%.8f (count:%d), final_covered=%.8f, uncovered=%.8f",
-		position.Instrument, position.PositionSize, maxTpSize, tpCount, maxSlSize, slCount, coveredSize, uncoveredSize)
+		position.Instrument, position.PositionSize, totalTpSize, tpCount, totalSlSize, slCount, coveredSize, uncoveredSize)
 
 	return uncoveredSize
 }

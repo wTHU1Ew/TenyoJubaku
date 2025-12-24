@@ -14,6 +14,7 @@ import (
 	"github.com/wTHU1Ew/TenyoJubaku/internal/ordercontrol"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/storage"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/tpsl"
+	"github.com/wTHU1Ew/TenyoJubaku/internal/version"
 )
 
 func main() {
@@ -57,6 +58,7 @@ func main() {
 	defer log.Close()
 
 	log.Info("=== TenyoJubaku Starting ===")
+	log.Info("Version: %s", version.GetFullVersion())
 	log.Info("Configuration loaded: %s", cfg.MaskSensitive())
 
 	// Initialize database
