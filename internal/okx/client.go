@@ -544,3 +544,42 @@ func (c *Client) GetPendingOrders(ctx context.Context) (*PendingOrdersResponse, 
 
 	return &resp, nil
 }
+
+// GetOrdersHistory 获取订单历史（最近7天）/ Get order history (last 7 days)
+// Retrieves completed orders from the last 7 days, regardless of how they were placed
+// (OKX app, different APIs, etc). This ensures all account orders are visible.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - instType: Instrument type (SPOT, MARGIN, SWAP, FUTURES, OPTION)
+//   - limit: Number of results per request (max 100, default 100)
+//
+// Returns: Order history response with list of completed orders, or error
+func (c *Client) GetOrdersHistory(ctx context.Context, instType string, limit int) (*OrderHistoryResponse, error) {
+	// Validate and set default limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Build request path with parameters
+	path := fmt.Sprintf("/api/v5/trade/orders-history?instType=%s&limit=%d", instType, limit)
+
+	respBody, err := c.doRequest(ctx, "GET", path)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp OrderHistoryResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}

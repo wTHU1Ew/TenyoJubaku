@@ -37,6 +37,7 @@ type MockClient struct {
 	AmendOrderCallCount          int
 	CancelOrderCallCount         int
 	GetPendingOrdersCallCount    int
+	GetOrdersHistoryCallCount    int
 
 	// Optional: Configure custom behavior for each method
 	GetAccountBalanceFunc   func() (*AccountBalanceResponse, error)
@@ -61,6 +62,8 @@ type MockClient struct {
 	CancelOrderError          error
 	GetPendingOrdersResponse  *PendingOrdersResponse
 	GetPendingOrdersError     error
+	GetOrdersHistoryResponse  *OrderHistoryResponse
+	GetOrdersHistoryError     error
 	TickerResponse            *TickerResponse  // For testing maker-only checks
 }
 
@@ -327,7 +330,7 @@ func (m *MockClient) CancelOrder(ctx context.Context, req *CancelOrderRequest) (
 	return m.CancelOrderResponse, nil
 }
 
-// GetPendingOrders mock implementation  
+// GetPendingOrders mock implementation
 func (m *MockClient) GetPendingOrders(ctx context.Context) (*PendingOrdersResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -339,4 +342,18 @@ func (m *MockClient) GetPendingOrders(ctx context.Context) (*PendingOrdersRespon
 	}
 
 	return m.GetPendingOrdersResponse, nil
+}
+
+// GetOrdersHistory mock implementation
+func (m *MockClient) GetOrdersHistory(ctx context.Context, instType string, limit int) (*OrderHistoryResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.GetOrdersHistoryCallCount++
+
+	if m.GetOrdersHistoryError != nil {
+		return nil, m.GetOrdersHistoryError
+	}
+
+	return m.GetOrdersHistoryResponse, nil
 }

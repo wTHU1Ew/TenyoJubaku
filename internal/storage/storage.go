@@ -399,6 +399,22 @@ func (s *Storage) InsertOrderHistory(ctx context.Context, order *models.OrderHis
 		return fmt.Errorf("invalid order history: %w", err)
 	}
 
+	// Check if order with this order_id already exists to avoid duplicates
+	// This is important when syncing orders from OKX API
+	var existingID int64
+	checkQuery := `SELECT id FROM order_history WHERE order_id = ? LIMIT 1`
+	err := s.db.QueryRowContext(ctx, checkQuery, order.OrderID).Scan(&existingID)
+
+	if err == nil {
+		// Order already exists, skip insertion
+		order.ID = existingID
+		return nil // Not an error - idempotent operation
+	} else if err != sql.ErrNoRows {
+		// Real error occurred during check
+		return fmt.Errorf("failed to check existing order: %w", err)
+	}
+
+	// Order doesn't exist, proceed with insertion
 	query := `
 		INSERT INTO order_history (order_id, inst_id, side, ord_type, size, price, reduce_only, placed_at, week_start, status, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

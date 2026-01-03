@@ -102,6 +102,18 @@ type Interface interface {
 	// Returns error on API request failure or response parsing failure.
 	GetPendingOrders(ctx context.Context) (*PendingOrdersResponse, error)
 
+	// GetOrdersHistory retrieves order history (completed orders).
+	// Returns orders from the last 7 days, including filled and canceled orders.
+	// This method fetches ALL orders regardless of how they were placed (app, API, etc).
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - instType: Instrument type (SPOT, MARGIN, SWAP, FUTURES, OPTION)
+	//   - limit: Number of results (max 100, default 100)
+	//
+	// Returns error on API request failure or response parsing failure.
+	GetOrdersHistory(ctx context.Context, instType string, limit int) (*OrderHistoryResponse, error)
+
 	// HealthCheck verifies exchange API connectivity and authentication.
 	// Typically implemented by attempting a simple API call (e.g., GetAccountBalance).
 	//

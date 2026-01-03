@@ -302,3 +302,11 @@ type OrderData struct {
 	CTime       string `json:"cTime"`       // Creation time
 	UTime       string `json:"uTime"`       // Update time
 }
+
+// OrderHistoryResponse OKX订单历史响应 / OKX order history response
+// Used for both 7-day and 3-month order history endpoints
+type OrderHistoryResponse struct {
+	Code string      `json:"code"`
+	Msg  string      `json:"msg"`
+	Data []OrderData `json:"data"`
+}

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -261,6 +262,7 @@ func handleOrderStats() {
 func handleOrderList() {
 	fs := flag.NewFlagSet("order list", flag.ExitOnError)
 	limit := fs.Int("limit", 10, "Number of orders to display")
+	sync := fs.Bool("sync", true, "Sync orders from OKX API before displaying")
 	fs.Parse(os.Args[3:])
 
 	// Load config
@@ -283,13 +285,80 @@ func handleOrderList() {
 	}
 	defer db.Close()
 
+	ctx := context.Background()
+
+	// Sync orders from OKX API if requested
+	if *sync {
+		fmt.Printf("Syncing orders from OKX API...\n")
+
+		// Initialize OKX client
+		okxClient := okx.New(
+			cfg.OKX.APIURL,
+			cfg.OKX.APIKey,
+			cfg.OKX.APISecret,
+			cfg.OKX.Passphrase,
+			cfg.OKX.Timeout,
+			cfg.OKX.MaxRetries,
+			false, // Disable debug for CLI
+		)
+
+		// Fetch order history from OKX (SWAP orders, last 7 days)
+		histResp, err := okxClient.GetOrdersHistory(ctx, "SWAP", 100)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to fetch order history from OKX: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Showing local orders only...\n\n")
+		} else {
+			// Sync orders to local database
+			syncedCount := 0
+			for _, okxOrder := range histResp.Data {
+				// Parse timestamps (OKX returns milliseconds as string)
+				var placedAtMs time.Time
+				if ms, err := strconv.ParseInt(okxOrder.CTime, 10, 64); err == nil {
+					placedAtMs = time.Unix(0, ms*1000000) // Convert ms to ns
+				} else {
+					// Fallback: try parsing as seconds
+					if sec, err := strconv.ParseInt(okxOrder.CTime, 10, 64); err == nil {
+						placedAtMs = time.Unix(sec, 0)
+					} else {
+						fmt.Fprintf(os.Stderr, "Warning: Failed to parse timestamp for order %s: %v\n", okxOrder.OrdId, err)
+						continue
+					}
+				}
+
+				reduceOnly := okxOrder.ReduceOnly == "true"
+				weekStart := models.GetWeekStart(placedAtMs)
+
+				orderHistory := &models.OrderHistory{
+					OrderID:    okxOrder.OrdId,
+					InstId:     okxOrder.InstId,
+					Side:       okxOrder.Side,
+					OrdType:    okxOrder.OrdType,
+					Size:       okxOrder.Sz,
+					Price:      okxOrder.Px,
+					ReduceOnly: reduceOnly,
+					PlacedAt:   placedAtMs,
+					WeekStart:  weekStart,
+					Status:     okxOrder.State,
+					CreatedAt:  time.Now().UTC(),
+				}
+
+				// Insert into database (duplicate check is handled by InsertOrderHistory)
+				if err := db.InsertOrderHistory(ctx, orderHistory); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to sync order %s: %v\n", okxOrder.OrdId, err)
+				} else {
+					syncedCount++
+				}
+			}
+
+			fmt.Printf("Synced %d orders from OKX API\n\n", syncedCount)
+		}
+	}
+
 	// Get current week start
 	now := time.Now().UTC()
 	weekStart := models.GetWeekStart(now)
 
-	ctx := context.Background()
-
-	// Get orders for current week
+	// Get orders for current week from local database
 	orders, err := db.GetOrdersForWeek(ctx, weekStart)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get orders: %v\n", err)
@@ -302,6 +371,7 @@ func handleOrderList() {
 
 	if len(orders) == 0 {
 		fmt.Printf("No orders found for this week.\n")
+		fmt.Printf("\nTip: Use --sync=true to fetch orders from OKX API\n")
 		return
 	}
 

@@ -47,6 +47,14 @@ Maintain a consistent external interface, as front-end development may be needed
 
 Configure files should be in YAML format.
 
+Project progress will be recorded in the `docs` directory, allowing AI to read the `.md` files within `docs` to obtain project progress. AI will also record its work in the `docs` directory.
+
+- Organized all documentation into `docs/features/` by feature category
+
+- Created feature-specific folders: feature1-tpsl, feature2-position-management, feature3-order-control, infrastructure, architecture, archived
+
+- Established naming convention: `<NAME>_<TYPE>_V<VERSION>_<DATE>.md`
+
 ### Architecture Patterns
 [Document your architectural decisions and patterns]
 

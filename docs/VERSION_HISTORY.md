@@ -8,6 +8,25 @@
 
 ## Version History
 
+### V3.1 (2026-01-03)
+
+**Type:** Feature Enhancement
+
+**Changes:**
+1. **CLI Order Sync Enhancement**
+   - Added `GetOrdersHistory()` API method to fetch orders from OKX
+   - Orders now synced from OKX API (all orders, not just CLI-placed)
+   - Added duplicate prevention in `InsertOrderHistory()` using order_id
+   - Enhanced `order list` command with `--sync` flag (default: true)
+   - Supports viewing all orders: OKX app, different APIs, CLI, etc.
+   - Files: `internal/okx/client.go`, `internal/storage/storage.go`, `cmd/cli/main.go`
+   - See: `docs/features/feature3-order-control/CLI_ORDER_SYNC_ENHANCEMENT_V3.1_2026-01-03.md`
+
+**Documentation Location:**
+- Enhancement Details: `docs/features/feature3-order-control/CLI_ORDER_SYNC_ENHANCEMENT_V3.1_2026-01-03.md`
+
+---
+
 ### V3.0 (2025-12-25)
 
 **Type:** Critical Bug Fix + Documentation Restructuring
