@@ -136,6 +136,43 @@ func (s *Storage) initSchema() error {
 		return fmt.Errorf("failed to create order_history table: %w", err)
 	}
 
+	// Create positions_history table (V3.2: Historical Positions)
+	positionsHistorySchema := `
+	CREATE TABLE IF NOT EXISTS positions_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		pos_id TEXT NOT NULL UNIQUE,
+		inst_type TEXT NOT NULL,
+		inst_id TEXT NOT NULL,
+		mgn_mode TEXT NOT NULL,
+		pos_side TEXT NOT NULL,
+		lever TEXT NOT NULL,
+		open_avg_px TEXT NOT NULL,
+		close_avg_px TEXT NOT NULL,
+		open_max_pos TEXT NOT NULL,
+		close_total_pos TEXT NOT NULL,
+		realized_pnl TEXT NOT NULL,
+		pnl TEXT NOT NULL,
+		pnl_ratio TEXT NOT NULL,
+		fee TEXT NOT NULL,
+		funding_fee TEXT NOT NULL,
+		liq_penalty TEXT NOT NULL,
+		close_type TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		ccy TEXT NOT NULL,
+		opened_at DATETIME NOT NULL,
+		closed_at DATETIME NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_positions_history_pos_id ON positions_history(pos_id);
+	CREATE INDEX IF NOT EXISTS idx_positions_history_inst_id ON positions_history(inst_id);
+	CREATE INDEX IF NOT EXISTS idx_positions_history_closed_at ON positions_history(closed_at);
+	CREATE INDEX IF NOT EXISTS idx_positions_history_close_type ON positions_history(close_type);
+	`
+
+	if _, err := s.db.Exec(positionsHistorySchema); err != nil {
+		return fmt.Errorf("failed to create positions_history table: %w", err)
+	}
+
 	return nil
 }
 
@@ -630,4 +667,182 @@ func (s *Storage) UpdatePendingConfirmation(ctx context.Context, orderID string,
 func (s *Storage) DeletePendingConfirmation(ctx context.Context, orderID string) error {
 	// TODO: Implement database DELETE
 	return fmt.Errorf("DeletePendingConfirmation not yet implemented")
+}
+
+// ============================================================================
+// Position History Methods (V3.2)
+// ============================================================================
+
+// InsertPositionHistory inserts a position history record into storage
+// 插入历史仓位记录到数据库 / Insert position history record to database
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - position: Position history data model
+//
+// Returns:
+//   - error: 数据验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
+func (s *Storage) InsertPositionHistory(ctx context.Context, position *models.PositionHistory) error {
+	if err := position.Validate(); err != nil {
+		return fmt.Errorf("invalid position history: %w", err)
+	}
+
+	// Check if position with this pos_id already exists to avoid duplicates
+	var existingID int64
+	checkQuery := `SELECT id FROM positions_history WHERE pos_id = ? LIMIT 1`
+	err := s.db.QueryRowContext(ctx, checkQuery, position.PosId).Scan(&existingID)
+
+	if err == nil {
+		// Position already exists, skip insertion
+		position.ID = existingID
+		return nil // Not an error - idempotent operation
+	} else if err != sql.ErrNoRows {
+		// Real error occurred during check
+		return fmt.Errorf("failed to check existing position: %w", err)
+	}
+
+	// Position doesn't exist, proceed with insertion
+	query := `
+		INSERT INTO positions_history (
+			pos_id, inst_type, inst_id, mgn_mode, pos_side, lever,
+			open_avg_px, close_avg_px, open_max_pos, close_total_pos,
+			realized_pnl, pnl, pnl_ratio, fee, funding_fee, liq_penalty,
+			close_type, direction, ccy, opened_at, closed_at, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	result, err := s.db.ExecContext(ctx, query,
+		position.PosId,
+		position.InstType,
+		position.InstId,
+		position.MgnMode,
+		position.PosSide,
+		position.Lever,
+		position.OpenAvgPx,
+		position.CloseAvgPx,
+		position.OpenMaxPos,
+		position.CloseTotalPos,
+		position.RealizedPnl,
+		position.Pnl,
+		position.PnlRatio,
+		position.Fee,
+		position.FundingFee,
+		position.LiqPenalty,
+		position.CloseType,
+		position.Direction,
+		position.Ccy,
+		position.OpenedAt.UTC(),
+		position.ClosedAt.UTC(),
+		position.CreatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert position history: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
+
+	position.ID = id
+	return nil
+}
+
+// GetPositionsHistory retrieves position history with optional filters
+// 获取历史仓位列表，支持按币种和时间过滤 / Get position history list with optional currency and time filters
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - instId: Optional instrument ID filter (empty string = all instruments)
+//   - limit: Maximum number of records to return (0 = no limit)
+//
+// Returns:
+//   - []models.PositionHistory: 历史仓位列表，按关闭时间倒序 / Position history list, sorted by closed_at DESC
+//   - error: 数据库查询失败时返回错误 / Error on database query failure
+func (s *Storage) GetPositionsHistory(ctx context.Context, instId string, limit int) ([]models.PositionHistory, error) {
+	query := `
+		SELECT id, pos_id, inst_type, inst_id, mgn_mode, pos_side, lever,
+			   open_avg_px, close_avg_px, open_max_pos, close_total_pos,
+			   realized_pnl, pnl, pnl_ratio, fee, funding_fee, liq_penalty,
+			   close_type, direction, ccy, opened_at, closed_at, created_at
+		FROM positions_history
+	`
+
+	var args []any
+	if instId != "" {
+		query += ` WHERE inst_id = ?`
+		args = append(args, instId)
+	}
+
+	query += ` ORDER BY closed_at DESC`
+
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query positions history: %w", err)
+	}
+	defer rows.Close()
+
+	var positions []models.PositionHistory
+	for rows.Next() {
+		var position models.PositionHistory
+		var openedAt, closedAt, createdAt string
+
+		err := rows.Scan(
+			&position.ID,
+			&position.PosId,
+			&position.InstType,
+			&position.InstId,
+			&position.MgnMode,
+			&position.PosSide,
+			&position.Lever,
+			&position.OpenAvgPx,
+			&position.CloseAvgPx,
+			&position.OpenMaxPos,
+			&position.CloseTotalPos,
+			&position.RealizedPnl,
+			&position.Pnl,
+			&position.PnlRatio,
+			&position.Fee,
+			&position.FundingFee,
+			&position.LiqPenalty,
+			&position.CloseType,
+			&position.Direction,
+			&position.Ccy,
+			&openedAt,
+			&closedAt,
+			&createdAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan position: %w", err)
+		}
+
+		// Parse timestamps
+		position.OpenedAt, err = time.Parse(time.RFC3339, openedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse opened_at: %w", err)
+		}
+
+		position.ClosedAt, err = time.Parse(time.RFC3339, closedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse closed_at: %w", err)
+		}
+
+		position.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse created_at: %w", err)
+		}
+
+		positions = append(positions, position)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return positions, nil
 }

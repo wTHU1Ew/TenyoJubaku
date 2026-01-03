@@ -114,6 +114,18 @@ type Interface interface {
 	// Returns error on API request failure or response parsing failure.
 	GetOrdersHistory(ctx context.Context, instType string, limit int) (*OrderHistoryResponse, error)
 
+	// GetPositionsHistory retrieves closed positions history (last 3 months).
+	// Returns complete position lifecycle data including open/close prices, PnL, fees, etc.
+	// This is ideal for analyzing trading performance at the position level.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - instType: Instrument type (MARGIN, SWAP, FUTURES, OPTION)
+	//   - limit: Number of results (max 100, default 100)
+	//
+	// Returns error on API request failure or response parsing failure.
+	GetPositionsHistory(ctx context.Context, instType string, limit int) (*PositionsHistoryResponse, error)
+
 	// HealthCheck verifies exchange API connectivity and authentication.
 	// Typically implemented by attempting a simple API call (e.g., GetAccountBalance).
 	//

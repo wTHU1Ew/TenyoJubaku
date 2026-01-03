@@ -287,6 +287,45 @@ func (c *Client) GetPositions(ctx context.Context) (*PositionsResponse, error) {
 	return &resp, nil
 }
 
+// GetPositionsHistory 获取历史仓位（最近3个月）/ Get positions history (last 3 months)
+// Retrieves closed positions from the last 3 months with complete PnL data.
+// Perfect for analyzing trading performance at the position level.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - instType: Instrument type (MARGIN, SWAP, FUTURES, OPTION)
+//   - limit: Number of results per request (max 100, default 100)
+//
+// Returns: Positions history response with closed position data, or error
+func (c *Client) GetPositionsHistory(ctx context.Context, instType string, limit int) (*PositionsHistoryResponse, error) {
+	// Validate and set default limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Build request path with parameters
+	path := fmt.Sprintf("/api/v5/account/positions-history?instType=%s&limit=%d", instType, limit)
+
+	respBody, err := c.doRequest(ctx, "GET", path)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp PositionsHistoryResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return &resp, nil
+}
+
 // HealthCheck 健康检查 / Health check by testing API connectivity
 // 通过尝试获取账户余额来验证API连接和认证是否正常
 // Verify API connectivity and authentication by attempting to fetch account balance

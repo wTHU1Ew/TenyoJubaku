@@ -310,3 +310,37 @@ type OrderHistoryResponse struct {
 	Msg  string      `json:"msg"`
 	Data []OrderData `json:"data"`
 }
+
+// PositionHistoryData OKX历史仓位数据 / OKX position history data
+type PositionHistoryData struct {
+	InstType      string `json:"instType"`      // Instrument type
+	InstId        string `json:"instId"`        // Instrument ID
+	MgnMode       string `json:"mgnMode"`       // Margin mode: cross, isolated
+	Type          string `json:"type"`          // Close type: 1=partial, 2=all, 3=liquidation, 4=partial_liq, 5=adl
+	CTime         string `json:"cTime"`         // Position creation time (ms)
+	UTime         string `json:"uTime"`         // Position update time (ms)
+	OpenAvgPx     string `json:"openAvgPx"`     // Average opening price
+	CloseAvgPx    string `json:"closeAvgPx"`    // Average closing price
+	PosId         string `json:"posId"`         // Position ID
+	OpenMaxPos    string `json:"openMaxPos"`    // Max position size
+	CloseTotalPos string `json:"closeTotalPos"` // Total closed position size
+	RealizedPnl   string `json:"realizedPnl"`   // Realized PnL
+	Fee           string `json:"fee"`           // Accumulated fee
+	FundingFee    string `json:"fundingFee"`    // Accumulated funding fee
+	LiqPenalty    string `json:"liqPenalty"`    // Liquidation penalty
+	Pnl           string `json:"pnl"`           // PnL (excluding fee)
+	PnlRatio      string `json:"pnlRatio"`      // PnL ratio
+	PosSide       string `json:"posSide"`       // Position side: long, short, net
+	Lever         string `json:"lever"`         // Leverage
+	Direction     string `json:"direction"`     // Direction: long, short
+	TriggerPx     string `json:"triggerPx"`     // Trigger mark price (for liquidation)
+	Uly           string `json:"uly"`           // Underlying
+	Ccy           string `json:"ccy"`           // Margin currency
+}
+
+// PositionsHistoryResponse OKX历史仓位响应 / OKX positions history response
+type PositionsHistoryResponse struct {
+	Code string                `json:"code"`
+	Msg  string                `json:"msg"`
+	Data []PositionHistoryData `json:"data"`
+}

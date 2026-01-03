@@ -29,6 +29,8 @@ func main() {
 	switch command {
 	case "order":
 		handleOrderCommand()
+	case "position":
+		handlePositionCommand()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -311,6 +313,12 @@ func handleOrderList() {
 			// Sync orders to local database
 			syncedCount := 0
 			for _, okxOrder := range histResp.Data {
+				// Skip canceled orders - they don't contribute to trading analysis
+				// Only record filled and partially_filled orders for statistics
+				if okxOrder.State == "canceled" || okxOrder.State == "live" {
+					continue
+				}
+
 				// Parse timestamps (OKX returns milliseconds as string)
 				var placedAtMs time.Time
 				if ms, err := strconv.ParseInt(okxOrder.CTime, 10, 64); err == nil {
@@ -425,10 +433,11 @@ func printUsage() {
 	fmt.Println("  tenyojubaku-cli <command> [options]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  order place   Place a new order with frequency and maker-only checks")
-	fmt.Println("  order stats   Show weekly order statistics")
-	fmt.Println("  order list    List recent orders")
-	fmt.Println("  help          Show this help message")
+	fmt.Println("  order place      Place a new order with frequency and maker-only checks")
+	fmt.Println("  order stats      Show weekly order statistics")
+	fmt.Println("  order list       List recent orders")
+	fmt.Println("  position list    List closed positions history")
+	fmt.Println("  help             Show this help message")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  # Place a limit buy order")
@@ -442,6 +451,9 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("  # List recent orders")
 	fmt.Println("  tenyojubaku-cli order list --limit 20")
+	fmt.Println()
+	fmt.Println("  # List closed positions with sync")
+	fmt.Println("  tenyojubaku-cli position list --sync=true --limit 30")
 }
 
 func printOrderUsage() {
@@ -453,4 +465,200 @@ func printOrderUsage() {
 	fmt.Println("  list     List recent orders")
 	fmt.Println()
 	fmt.Println("Run 'tenyojubaku-cli order <subcommand> -h' for more details")
+}
+
+// ============================================================================
+// Position Commands (V3.2)
+// ============================================================================
+
+func handlePositionCommand() {
+	if len(os.Args) < 3 {
+		printPositionUsage()
+		os.Exit(1)
+	}
+
+	subcommand := os.Args[2]
+
+	switch subcommand {
+	case "list":
+		handlePositionList()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown position subcommand: %s\n\n", subcommand)
+		printPositionUsage()
+		os.Exit(1)
+	}
+}
+
+func handlePositionList() {
+	fs := flag.NewFlagSet("position list", flag.ExitOnError)
+
+	sync := fs.Bool("sync", false, "Sync positions from OKX API before listing")
+	limit := fs.Int("limit", 20, "Limit number of positions to display (0 = all)")
+	instrument := fs.String("instrument", "", "Filter by instrument ID (e.g., BTC-USDT-SWAP)")
+
+	fs.Parse(os.Args[3:])
+
+	// Load configuration
+	cfg, err := config.Load("configs/config.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize database
+	db, err := storage.New(
+		cfg.Database.Path,
+		cfg.Database.WALMode,
+		cfg.Database.MaxOpenConns,
+		cfg.Database.MaxIdleConns,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Sync positions from OKX API if requested
+	if *sync {
+		fmt.Printf("Syncing positions from OKX API...\n")
+
+		// Initialize OKX client
+		okxClient := okx.New(
+			cfg.OKX.APIURL,
+			cfg.OKX.APIKey,
+			cfg.OKX.APISecret,
+			cfg.OKX.Passphrase,
+			cfg.OKX.Timeout,
+			cfg.OKX.MaxRetries,
+			false, // Disable debug for CLI
+		)
+
+		// Fetch position history from OKX (SWAP positions, last 3 months)
+		histResp, err := okxClient.GetPositionsHistory(ctx, "SWAP", 100)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to fetch position history from OKX: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Showing local positions only...\n\n")
+		} else {
+			// Sync positions to local database
+			syncedCount := 0
+			for _, okxPos := range histResp.Data {
+				// Parse timestamps (OKX returns milliseconds as string)
+				var openedAt, closedAt time.Time
+				if ms, err := strconv.ParseInt(okxPos.CTime, 10, 64); err == nil {
+					openedAt = time.Unix(0, ms*1000000) // Convert ms to ns
+				} else {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to parse CTime for position %s: %v\n", okxPos.PosId, err)
+					continue
+				}
+
+				if ms, err := strconv.ParseInt(okxPos.UTime, 10, 64); err == nil {
+					closedAt = time.Unix(0, ms*1000000)
+				} else {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to parse UTime for position %s: %v\n", okxPos.PosId, err)
+					continue
+				}
+
+				positionHistory := &models.PositionHistory{
+					PosId:         okxPos.PosId,
+					InstType:      okxPos.InstType,
+					InstId:        okxPos.InstId,
+					MgnMode:       okxPos.MgnMode,
+					PosSide:       okxPos.PosSide,
+					Lever:         okxPos.Lever,
+					OpenAvgPx:     okxPos.OpenAvgPx,
+					CloseAvgPx:    okxPos.CloseAvgPx,
+					OpenMaxPos:    okxPos.OpenMaxPos,
+					CloseTotalPos: okxPos.CloseTotalPos,
+					RealizedPnl:   okxPos.RealizedPnl,
+					Pnl:           okxPos.Pnl,
+					PnlRatio:      okxPos.PnlRatio,
+					Fee:           okxPos.Fee,
+					FundingFee:    okxPos.FundingFee,
+					LiqPenalty:    okxPos.LiqPenalty,
+					CloseType:     okxPos.Type,
+					Direction:     okxPos.Direction,
+					Ccy:           okxPos.Ccy,
+					OpenedAt:      openedAt,
+					ClosedAt:      closedAt,
+					CreatedAt:     time.Now().UTC(),
+				}
+
+				// Insert into database (duplicate check is handled by InsertPositionHistory)
+				if err := db.InsertPositionHistory(ctx, positionHistory); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to sync position %s: %v\n", okxPos.PosId, err)
+				} else {
+					syncedCount++
+				}
+			}
+
+			fmt.Printf("Synced %d positions from OKX API\n\n", syncedCount)
+		}
+	}
+
+	// Get positions from local database
+	displayLimit := 0
+	if *limit > 0 {
+		displayLimit = *limit
+	}
+
+	positions, err := db.GetPositionsHistory(ctx, *instrument, displayLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get positions: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display positions
+	if *instrument != "" {
+		fmt.Printf("Position History for %s\n", *instrument)
+	} else {
+		fmt.Printf("Position History (Recent %d positions)\n", len(positions))
+	}
+	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+
+	if len(positions) == 0 {
+		fmt.Printf("No positions found.\n")
+		fmt.Printf("\nTip: Use --sync=true to fetch positions from OKX API\n")
+		return
+	}
+
+	// Use tabwriter for aligned columns
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "CLOSED AT\tINSTRUMENT\tSIDE\tSIZE\tOPEN PX\tCLOSE PX\tPNL\tCLOSE TYPE")
+	fmt.Fprintln(w, "─────────\t──────────\t────\t────\t───────\t────────\t───\t──────────")
+
+	for _, pos := range positions {
+		timeStr := pos.ClosedAt.Format("01-02 15:04")
+		closeTypeDesc := pos.GetCloseTypeDescription()
+
+		// Format PNL with + or - sign
+		pnlStr := pos.RealizedPnl
+		if pnlStr != "" && pnlStr != "0" && pnlStr[0] != '-' {
+			pnlStr = "+" + pnlStr
+		}
+
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			timeStr,
+			pos.InstId,
+			pos.PosSide,
+			pos.CloseTotalPos,
+			pos.OpenAvgPx,
+			pos.CloseAvgPx,
+			pnlStr,
+			closeTypeDesc,
+		)
+	}
+	w.Flush()
+
+	fmt.Printf("\nTotal Positions: %d\n", len(positions))
+}
+
+func printPositionUsage() {
+	fmt.Println("Usage: tenyojubaku-cli position <subcommand> [options]")
+	fmt.Println()
+	fmt.Println("Subcommands:")
+	fmt.Println("  list     List closed positions history")
+	fmt.Println()
+	fmt.Println("Run 'tenyojubaku-cli position <subcommand> -h' for more details")
 }
