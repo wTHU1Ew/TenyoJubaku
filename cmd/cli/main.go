@@ -18,7 +18,21 @@ import (
 	"github.com/wTHU1Ew/TenyoJubaku/pkg/models"
 )
 
+// Global debug flag
+var globalDebug bool
+
 func main() {
+	// Parse global flags first
+	// Check for --debug flag anywhere in the arguments
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "--debug" || os.Args[i] == "-debug" {
+			globalDebug = true
+			// Remove the flag from os.Args to simplify subsequent parsing
+			os.Args = append(os.Args[:i], os.Args[i+1:]...)
+			break
+		}
+	}
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -98,6 +112,11 @@ func handleOrderPlace() {
 	log := logger.NewTestLogger()
 
 	// Initialize database
+	if globalDebug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Initializing database for order placement\n")
+		fmt.Fprintf(os.Stderr, "  Path: %s\n", cfg.Database.Path)
+	}
+
 	db, err := storage.New(
 		cfg.Database.Path,
 		cfg.Database.WALMode,
@@ -109,6 +128,10 @@ func handleOrderPlace() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	if globalDebug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Database initialized successfully\n")
+	}
 
 	// Initialize OKX client
 	okxClient := okx.New(
@@ -189,6 +212,11 @@ func handleOrderStats() {
 	}
 
 	// Initialize database
+	if globalDebug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Initializing database for order stats\n")
+		fmt.Fprintf(os.Stderr, "  Path: %s\n", cfg.Database.Path)
+	}
+
 	db, err := storage.New(
 		cfg.Database.Path,
 		cfg.Database.WALMode,
@@ -200,6 +228,10 @@ func handleOrderStats() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	if globalDebug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Database initialized successfully\n")
+	}
 
 	// Get current week start
 	now := time.Now().UTC()
@@ -265,8 +297,11 @@ func handleOrderList() {
 	fs := flag.NewFlagSet("order list", flag.ExitOnError)
 	limit := fs.Int("limit", 10, "Number of orders to display")
 	sync := fs.Bool("sync", true, "Sync orders from OKX API before displaying")
-	debug := fs.Bool("debug", false, "Enable debug output for troubleshooting")
+	localDebug := fs.Bool("debug", false, "Enable debug output for troubleshooting")
 	fs.Parse(os.Args[3:])
+
+	// Merge global and local debug flags
+	debug := globalDebug || *localDebug
 
 	// Load config
 	cfg, err := config.Load("configs/config.yaml")
@@ -276,7 +311,7 @@ func handleOrderList() {
 	}
 
 	// Initialize database
-	if *debug {
+	if debug {
 		fmt.Fprintf(os.Stderr, "DEBUG: Initializing database\n")
 		fmt.Fprintf(os.Stderr, "  Path: %s\n", cfg.Database.Path)
 		fmt.Fprintf(os.Stderr, "  WAL Mode: %v\n", cfg.Database.WALMode)
@@ -296,8 +331,28 @@ func handleOrderList() {
 	}
 	defer db.Close()
 
-	if *debug {
+	if debug {
 		fmt.Fprintf(os.Stderr, "DEBUG: Database initialized successfully\n")
+
+		// Verify PRAGMA settings
+		ctx := context.Background()
+		var busyTimeout, cacheSize, mmapSize int
+		var syncMode, tempStore, journalMode string
+
+		db.RawQuery(ctx, "PRAGMA busy_timeout", &busyTimeout)
+		db.RawQuery(ctx, "PRAGMA synchronous", &syncMode)
+		db.RawQuery(ctx, "PRAGMA cache_size", &cacheSize)
+		db.RawQuery(ctx, "PRAGMA temp_store", &tempStore)
+		db.RawQuery(ctx, "PRAGMA mmap_size", &mmapSize)
+		db.RawQuery(ctx, "PRAGMA journal_mode", &journalMode)
+
+		fmt.Fprintf(os.Stderr, "DEBUG: SQLite PRAGMA settings:\n")
+		fmt.Fprintf(os.Stderr, "  busy_timeout: %d ms\n", busyTimeout)
+		fmt.Fprintf(os.Stderr, "  journal_mode: %s\n", journalMode)
+		fmt.Fprintf(os.Stderr, "  synchronous: %s\n", syncMode)
+		fmt.Fprintf(os.Stderr, "  cache_size: %d\n", cacheSize)
+		fmt.Fprintf(os.Stderr, "  temp_store: %s\n", tempStore)
+		fmt.Fprintf(os.Stderr, "  mmap_size: %d\n", mmapSize)
 	}
 
 	ctx := context.Background()
@@ -365,7 +420,7 @@ func handleOrderList() {
 
 				// Insert into database (duplicate check is handled by InsertOrderHistory)
 				if err := db.InsertOrderHistory(ctx, orderHistory); err != nil {
-					if *debug {
+					if debug {
 						fmt.Fprintf(os.Stderr, "DEBUG: Failed to sync order %s\n", okxOrder.OrdId)
 						fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
 						fmt.Fprintf(os.Stderr, "  InstId: %s, Side: %s, Size: %s\n", okxOrder.InstId, okxOrder.Side, okxOrder.Sz)
@@ -374,7 +429,7 @@ func handleOrderList() {
 					}
 				} else {
 					syncedCount++
-					if *debug {
+					if debug {
 						fmt.Fprintf(os.Stderr, "DEBUG: Successfully synced order %s\n", okxOrder.OrdId)
 					}
 				}
@@ -528,6 +583,11 @@ func handlePositionList() {
 	}
 
 	// Initialize database
+	if globalDebug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Initializing database for position list\n")
+		fmt.Fprintf(os.Stderr, "  Path: %s\n", cfg.Database.Path)
+	}
+
 	db, err := storage.New(
 		cfg.Database.Path,
 		cfg.Database.WALMode,
@@ -539,6 +599,10 @@ func handlePositionList() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	if globalDebug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Database initialized successfully\n")
+	}
 
 	ctx := context.Background()
 

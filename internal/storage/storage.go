@@ -61,13 +61,20 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 	sqlDB.SetMaxOpenConns(maxOpenConns)
 	sqlDB.SetMaxIdleConns(maxIdleConns)
 
+	// Set busy_timeout first, before any other operations
+	// This is CRITICAL for concurrent access - must be set before WAL mode
+	if err := db.Exec("PRAGMA busy_timeout=5000").Error; err != nil {
+		return nil, fmt.Errorf("failed to set busy_timeout: %w", err)
+	}
+
 	// Enable WAL mode if requested
 	if walMode {
-		db.Exec("PRAGMA journal_mode=WAL")
+		if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
+			return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+		}
 	}
 
 	// Performance optimizations for SQLite
-	db.Exec("PRAGMA busy_timeout=5000")         // 等待5秒解决并发锁 / Wait 5s for concurrent locks
 	db.Exec("PRAGMA synchronous=NORMAL")        // 平衡性能和安全性 / Balance performance and safety
 	db.Exec("PRAGMA cache_size=-64000")         // 64MB缓存 / 64MB cache
 	db.Exec("PRAGMA temp_store=MEMORY")         // 临时表存内存 / Temp tables in memory
@@ -498,4 +505,19 @@ func (s *Storage) HealthCheck() error {
 		return fmt.Errorf("failed to get underlying database: %w", err)
 	}
 	return sqlDB.Ping()
+}
+
+// RawQuery 执行原始SQL查询 / Execute raw SQL query
+// 主要用于诊断目的，例如查询PRAGMA设置
+// Primarily used for diagnostic purposes, such as querying PRAGMA settings
+//
+// Parameters:
+//   - ctx: Context for the query
+//   - query: SQL query string (e.g., "PRAGMA busy_timeout")
+//   - result: Pointer to store the result
+//
+// Returns:
+//   - error: 查询失败时返回错误 / Error on query failure
+func (s *Storage) RawQuery(ctx context.Context, query string, result interface{}) error {
+	return s.db.WithContext(ctx).Raw(query).Scan(result).Error
 }

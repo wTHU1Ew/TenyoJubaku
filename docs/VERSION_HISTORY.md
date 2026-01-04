@@ -8,6 +8,51 @@
 
 ## Version History
 
+### V4.3 (2026-01-05)
+
+**Type:** CLI Enhancement + Diagnostics
+
+**Changes:**
+1. **Global --debug Flag for All CLI Commands**
+   - Enhanced debug flag to work globally: `./tenyojubaku-cli --debug <command> <subcommand>`
+   - Works with all commands: `order place`, `order stats`, `order list`, `position list`
+   - Can still use local `--debug` flag for individual subcommands
+   - Examples:
+     - `./tenyojubaku-cli --debug order stats`
+     - `./tenyojubaku-cli --debug position list --sync=true`
+     - `./tenyojubaku-cli order list --debug` (local flag)
+
+2. **Added PRAGMA Diagnostics**
+   - New `RawQuery()` method in storage package for diagnostic queries
+   - Debug mode now displays all SQLite PRAGMA settings:
+     - `busy_timeout`: Verifies 5000ms timeout is active
+     - `journal_mode`: Confirms WAL mode enabled
+     - `synchronous`, `cache_size`, `temp_store`, `mmap_size`: Performance settings
+   - Helps diagnose database configuration issues
+
+3. **Enhanced PRAGMA Error Checking**
+   - Added error checking for critical PRAGMA settings (busy_timeout, journal_mode)
+   - Moved busy_timeout setting before WAL mode initialization for better reliability
+   - Fails fast with clear error message if PRAGMA settings cannot be applied
+
+**Trigger:**
+- User requested global debug flag: "debug模式对于其它所有子命令都应该生效呀"
+- Need to diagnose why busy_timeout wasn't resolving lock issues on AWS
+
+**Benefits:**
+- ✅ Global debug flag works across all CLI commands
+- ✅ Real-time verification of PRAGMA settings
+- ✅ Better error reporting for database initialization failures
+- ✅ Easier troubleshooting for concurrent access issues
+
+**Files Modified:**
+- `cmd/cli/main.go` - Global debug flag parsing and support for all subcommands
+- `internal/storage/storage.go` - Enhanced PRAGMA error checking, added RawQuery method
+- `docs/VERSION_HISTORY.md` - Added V4.3 entry
+- `internal/version/version.go` - Updated to V4.3
+
+---
+
 ### V4.2 (2026-01-04)
 
 **Type:** Bug Fix + CLI Enhancement
