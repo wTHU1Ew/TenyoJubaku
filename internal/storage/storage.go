@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/wTHU1Ew/TenyoJubaku/pkg/models"
 )
@@ -43,6 +44,9 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},
+		SkipDefaultTransaction: true,  // 跳过默认事务，提升性能 / Skip default transaction for better performance
+		PrepareStmt:            true,  // 缓存prepared statements / Cache prepared statements
+		Logger:                 logger.Default.LogMode(logger.Silent), // 生产环境静默日志 / Silent logs in production
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GORM database: %w", err)
@@ -61,6 +65,12 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 	if walMode {
 		db.Exec("PRAGMA journal_mode=WAL")
 	}
+
+	// Performance optimizations for SQLite
+	db.Exec("PRAGMA synchronous=NORMAL")        // 平衡性能和安全性 / Balance performance and safety
+	db.Exec("PRAGMA cache_size=-64000")         // 64MB缓存 / 64MB cache
+	db.Exec("PRAGMA temp_store=MEMORY")         // 临时表存内存 / Temp tables in memory
+	db.Exec("PRAGMA mmap_size=268435456")       // 256MB内存映射 / 256MB memory-mapped I/O
 
 	storage := &Storage{db: db}
 
