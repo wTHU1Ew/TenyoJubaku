@@ -67,6 +67,7 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 	}
 
 	// Performance optimizations for SQLite
+	db.Exec("PRAGMA busy_timeout=5000")         // 等待5秒解决并发锁 / Wait 5s for concurrent locks
 	db.Exec("PRAGMA synchronous=NORMAL")        // 平衡性能和安全性 / Balance performance and safety
 	db.Exec("PRAGMA cache_size=-64000")         // 64MB缓存 / 64MB cache
 	db.Exec("PRAGMA temp_store=MEMORY")         // 临时表存内存 / Temp tables in memory

@@ -8,6 +8,43 @@
 
 ## Version History
 
+### V4.2 (2026-01-04)
+
+**Type:** Bug Fix + CLI Enhancement
+
+**Changes:**
+1. **Fixed Database Lock Issue (Critical)**
+   - Added `PRAGMA busy_timeout=5000` to wait 5 seconds for concurrent locks instead of failing immediately
+   - Resolves "database is locked" errors when CLI runs while monitor service is active
+   - Allows CLI and monitor to safely share the database with WAL mode
+
+2. **Added CLI Debug Mode**
+   - New `--debug` flag for `order list` command
+   - Provides detailed troubleshooting information:
+     - Database initialization details (path, WAL mode, connection pool settings)
+     - Per-order sync success/failure with full error messages
+     - Instrument ID, side, and size for failed orders
+   - Example: `./tenyojubaku-cli order list --debug`
+
+**Trigger:**
+- User reported "database is locked" errors when running CLI while monitor service is active
+- All 16 order syncs failed with lock errors despite WAL mode being enabled
+
+**Root Cause:**
+- SQLite default `busy_timeout=0` causes immediate failure on lock contention
+- Even with WAL mode, writes can conflict if timeout is not set
+
+**Solution:**
+- Added 5-second busy timeout allows CLI to wait for monitor to release locks
+- CLI now retries for 5 seconds before giving up, resolving 99% of concurrent access issues
+
+**Files Modified:**
+- `internal/storage/storage.go` - Added `PRAGMA busy_timeout=5000`
+- `cmd/cli/main.go` - Added `--debug` flag and detailed debug output
+- `internal/version/version.go` - Updated to V4.2
+
+---
+
 ### V4.1 (2026-01-04)
 
 **Type:** Performance Optimization

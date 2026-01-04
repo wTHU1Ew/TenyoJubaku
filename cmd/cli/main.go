@@ -265,6 +265,7 @@ func handleOrderList() {
 	fs := flag.NewFlagSet("order list", flag.ExitOnError)
 	limit := fs.Int("limit", 10, "Number of orders to display")
 	sync := fs.Bool("sync", true, "Sync orders from OKX API before displaying")
+	debug := fs.Bool("debug", false, "Enable debug output for troubleshooting")
 	fs.Parse(os.Args[3:])
 
 	// Load config
@@ -275,6 +276,14 @@ func handleOrderList() {
 	}
 
 	// Initialize database
+	if *debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Initializing database\n")
+		fmt.Fprintf(os.Stderr, "  Path: %s\n", cfg.Database.Path)
+		fmt.Fprintf(os.Stderr, "  WAL Mode: %v\n", cfg.Database.WALMode)
+		fmt.Fprintf(os.Stderr, "  Max Open Conns: %d\n", cfg.Database.MaxOpenConns)
+		fmt.Fprintf(os.Stderr, "  Max Idle Conns: %d\n", cfg.Database.MaxIdleConns)
+	}
+
 	db, err := storage.New(
 		cfg.Database.Path,
 		cfg.Database.WALMode,
@@ -286,6 +295,10 @@ func handleOrderList() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	if *debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Database initialized successfully\n")
+	}
 
 	ctx := context.Background()
 
@@ -352,9 +365,18 @@ func handleOrderList() {
 
 				// Insert into database (duplicate check is handled by InsertOrderHistory)
 				if err := db.InsertOrderHistory(ctx, orderHistory); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: Failed to sync order %s: %v\n", okxOrder.OrdId, err)
+					if *debug {
+						fmt.Fprintf(os.Stderr, "DEBUG: Failed to sync order %s\n", okxOrder.OrdId)
+						fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
+						fmt.Fprintf(os.Stderr, "  InstId: %s, Side: %s, Size: %s\n", okxOrder.InstId, okxOrder.Side, okxOrder.Sz)
+					} else {
+						fmt.Fprintf(os.Stderr, "Warning: Failed to sync order %s: %v\n", okxOrder.OrdId, err)
+					}
 				} else {
 					syncedCount++
+					if *debug {
+						fmt.Fprintf(os.Stderr, "DEBUG: Successfully synced order %s\n", okxOrder.OrdId)
+					}
 				}
 			}
 
