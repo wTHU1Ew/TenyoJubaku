@@ -2,36 +2,35 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
 	"github.com/wTHU1Ew/TenyoJubaku/pkg/models"
 )
 
-// Storage 数据库存储层 / Database storage layer
+// Storage GORM存储实现 / GORM storage implementation
 type Storage struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-// New 创建新的存储实例 / Create new storage instance
-// 初始化SQLite数据库连接，创建表结构，配置连接池
-// Initialize SQLite database connection, create table schema, configure connection pool
+// New 创建GORM存储实例 / Create GORM storage instance
+// 初始化GORM数据库连接，配置连接池，创建表结构
+// Initialize GORM database connection, configure connection pool, create table schema
 //
 // Parameters:
-//   - dbPath: Database file path (e.g., "./data/tenyojubaku.db"), directory will be created if not exists
-//   - walMode: Whether to enable WAL (Write-Ahead Logging) mode for better concurrency performance
-//   - maxOpenConns: Maximum number of open connections
-//   - maxIdleConns: Maximum number of idle connections
+//   - dbPath: Database file path (e.g., "./data/tenyojubaku.db")
+//   - walMode: Enable WAL mode for better concurrency
+//   - maxOpenConns: Maximum open connections
+//   - maxIdleConns: Maximum idle connections
 //
 // Returns:
-//   - *Storage: 已初始化的存储实例，包含数据库连接和表结构
-//     Initialized storage instance with database connection and table schema
-//   - error: 数据库创建失败或表结构初始化失败时返回错误
-//     Error on database creation failure or schema initialization failure
+//   - *Storage: 已初始化的GORM存储实例 / Initialized GORM storage instance
+//   - error: 初始化失败时返回错误 / Error on initialization failure
 func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage, error) {
 	// Ensure database directory exists
 	dir := filepath.Dir(dbPath)
@@ -39,29 +38,34 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	// Open database connection
-	db, err := sql.Open("sqlite3", dbPath)
+	// Open GORM connection
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		NowFunc: func() time.Time {
+			return time.Now().UTC()
+		},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("failed to open GORM database: %w", err)
 	}
 
-	// Set connection pool settings
-	db.SetMaxOpenConns(maxOpenConns)
-	db.SetMaxIdleConns(maxIdleConns)
+	// Get underlying *sql.DB for connection pool settings
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying database: %w", err)
+	}
+
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetMaxIdleConns(maxIdleConns)
 
 	// Enable WAL mode if requested
 	if walMode {
-		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
-		}
+		db.Exec("PRAGMA journal_mode=WAL")
 	}
 
 	storage := &Storage{db: db}
 
-	// Initialize database schema
+	// Initialize schema
 	if err := storage.initSchema(); err != nil {
-		db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
@@ -70,111 +74,43 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 
 // initSchema 初始化数据库架构 / Initialize database schema
 func (s *Storage) initSchema() error {
-	// Create account_balances table
-	accountBalancesSchema := `
-	CREATE TABLE IF NOT EXISTS account_balances (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		timestamp DATETIME NOT NULL,
-		currency VARCHAR(10) NOT NULL,
-		balance REAL NOT NULL,
-		available REAL NOT NULL,
-		frozen REAL NOT NULL,
-		equity REAL
-	);
-	CREATE INDEX IF NOT EXISTS idx_account_balances_timestamp ON account_balances(timestamp);
-	CREATE INDEX IF NOT EXISTS idx_account_balances_currency ON account_balances(currency);
-	`
-
-	if _, err := s.db.Exec(accountBalancesSchema); err != nil {
-		return fmt.Errorf("failed to create account_balances table: %w", err)
+	// AutoMigrate creates tables from struct definitions
+	err := s.db.AutoMigrate(
+		&models.AccountBalance{},
+		&models.Position{},
+		&models.OrderHistory{},
+		&models.PositionHistory{},
+		// NOTE: pending_confirmations表不在此迁移中创建
+		// 将在Feature 3 Phase 1B实现时添加
+	)
+	if err != nil {
+		return fmt.Errorf("failed to auto-migrate schema: %w", err)
 	}
 
-	// Create positions table
-	positionsSchema := `
-	CREATE TABLE IF NOT EXISTS positions (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		timestamp DATETIME NOT NULL,
-		instrument VARCHAR(50) NOT NULL,
-		position_side VARCHAR(10) NOT NULL,
-		position_size REAL NOT NULL,
-		average_price REAL NOT NULL,
-		unrealized_pnl REAL NOT NULL,
-		margin REAL NOT NULL,
-		leverage REAL,
-		margin_mode VARCHAR(10) DEFAULT 'cross'
-	);
-	CREATE INDEX IF NOT EXISTS idx_positions_timestamp ON positions(timestamp);
-	CREATE INDEX IF NOT EXISTS idx_positions_timestamp_instrument ON positions(timestamp, instrument);
-	`
+	// Create unique indexes for idempotent inserts
+	migrator := s.db.Migrator()
 
-	if _, err := s.db.Exec(positionsSchema); err != nil {
-		return fmt.Errorf("failed to create positions table: %w", err)
+	// Order history unique index (for idempotent inserts)
+	if !migrator.HasIndex(&models.OrderHistory{}, "idx_order_history_order_id_unique") {
+		s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_history_order_id_unique ON order_history(order_id)")
 	}
 
-	// Create order_history table (Feature 3: Order Control)
-	orderHistorySchema := `
-	CREATE TABLE IF NOT EXISTS order_history (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		order_id TEXT NOT NULL,
-		inst_id TEXT NOT NULL,
-		side TEXT NOT NULL,
-		ord_type TEXT NOT NULL,
-		size TEXT NOT NULL,
-		price TEXT,
-		reduce_only BOOLEAN NOT NULL DEFAULT 0,
-		placed_at DATETIME NOT NULL,
-		week_start DATE NOT NULL,
-		status TEXT NOT NULL,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE INDEX IF NOT EXISTS idx_order_history_week_start ON order_history(week_start);
-	CREATE INDEX IF NOT EXISTS idx_order_history_order_id ON order_history(order_id);
-	CREATE INDEX IF NOT EXISTS idx_order_history_placed_at ON order_history(placed_at);
-	`
-
-	if _, err := s.db.Exec(orderHistorySchema); err != nil {
-		return fmt.Errorf("failed to create order_history table: %w", err)
+	// Position history unique index (for idempotent inserts)
+	if !migrator.HasIndex(&models.PositionHistory{}, "idx_positions_history_pos_id") {
+		s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_history_pos_id ON positions_history(pos_id)")
 	}
 
-	// Create positions_history table (V3.2: Historical Positions)
-	positionsHistorySchema := `
-	CREATE TABLE IF NOT EXISTS positions_history (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		pos_id TEXT NOT NULL UNIQUE,
-		inst_type TEXT NOT NULL,
-		inst_id TEXT NOT NULL,
-		mgn_mode TEXT NOT NULL,
-		pos_side TEXT NOT NULL,
-		lever TEXT NOT NULL,
-		open_avg_px TEXT NOT NULL,
-		close_avg_px TEXT NOT NULL,
-		open_max_pos TEXT NOT NULL,
-		close_total_pos TEXT NOT NULL,
-		realized_pnl TEXT NOT NULL,
-		pnl TEXT NOT NULL,
-		pnl_ratio TEXT NOT NULL,
-		fee TEXT NOT NULL,
-		funding_fee TEXT NOT NULL,
-		liq_penalty TEXT NOT NULL,
-		close_type TEXT NOT NULL,
-		direction TEXT NOT NULL,
-		ccy TEXT NOT NULL,
-		opened_at DATETIME NOT NULL,
-		closed_at DATETIME NOT NULL,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE INDEX IF NOT EXISTS idx_positions_history_pos_id ON positions_history(pos_id);
-	CREATE INDEX IF NOT EXISTS idx_positions_history_inst_id ON positions_history(inst_id);
-	CREATE INDEX IF NOT EXISTS idx_positions_history_closed_at ON positions_history(closed_at);
-	CREATE INDEX IF NOT EXISTS idx_positions_history_close_type ON positions_history(close_type);
-	`
-
-	if _, err := s.db.Exec(positionsHistorySchema); err != nil {
-		return fmt.Errorf("failed to create positions_history table: %w", err)
+	// Composite index for positions (timestamp + instrument)
+	if !migrator.HasIndex(&models.Position{}, "idx_positions_timestamp_instrument") {
+		s.db.Exec("CREATE INDEX IF NOT EXISTS idx_positions_timestamp_instrument ON positions(timestamp, instrument)")
 	}
 
 	return nil
 }
+
+// ============================================================================
+// Account Balance Operations
+// ============================================================================
 
 // InsertAccountBalance 插入账户余额记录 / Insert account balance record
 // 将账户余额数据写入account_balances表，记录时间戳和币种余额信息
@@ -182,85 +118,16 @@ func (s *Storage) initSchema() error {
 //
 // Parameters:
 //   - balance: Account balance data model, must contain valid Currency, Balance, Available fields
-//     Timestamp will be converted to UTC for storage
 //
 // Returns:
 //   - error: 数据验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
-//     成功时会将生成的ID回写到balance.ID字段 / On success, generated ID is written back to balance.ID
 func (s *Storage) InsertAccountBalance(balance *models.AccountBalance) error {
 	if err := balance.Validate(); err != nil {
 		return fmt.Errorf("invalid account balance: %w", err)
 	}
 
-	query := `
-		INSERT INTO account_balances (timestamp, currency, balance, available, frozen, equity)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`
-
-	result, err := s.db.Exec(query,
-		balance.Timestamp.UTC(),
-		balance.Currency,
-		balance.Balance,
-		balance.Available,
-		balance.Frozen,
-		balance.Equity,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert account balance: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get last insert id: %w", err)
-	}
-
-	balance.ID = id
-	return nil
-}
-
-// InsertPosition 插入持仓记录 / Insert position record
-// 将持仓数据写入positions表，记录合约、持仓量、盈亏等信息
-// Write position data to positions table with contract, position size, PnL info
-//
-// Parameters:
-//   - position: Position data model, must contain valid Instrument, PositionSide, PositionSize fields
-//     Timestamp will be converted to UTC for storage
-//
-// Returns:
-//   - error: 数据验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
-//     成功时会将生成的ID回写到position.ID字段 / On success, generated ID is written back to position.ID
-func (s *Storage) InsertPosition(position *models.Position) error {
-	if err := position.Validate(); err != nil {
-		return fmt.Errorf("invalid position: %w", err)
-	}
-
-	query := `
-		INSERT INTO positions (timestamp, instrument, position_side, position_size, average_price, unrealized_pnl, margin, leverage, margin_mode)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	result, err := s.db.Exec(query,
-		position.Timestamp.UTC(),
-		position.Instrument,
-		position.PositionSide,
-		position.PositionSize,
-		position.AveragePrice,
-		position.UnrealizedPnL,
-		position.Margin,
-		position.Leverage,
-		position.MarginMode,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert position: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get last insert id: %w", err)
-	}
-
-	position.ID = id
-	return nil
+	result := s.db.Create(balance)
+	return result.Error
 }
 
 // GetLatestAccountBalances 获取最新的账户余额 / Get latest account balances
@@ -268,223 +135,128 @@ func (s *Storage) InsertPosition(position *models.Position) error {
 // Query all currency account balance records with the latest timestamp
 //
 // Returns:
-//   - []models.AccountBalance: 最新的账户余额切片，按币种排序
-//     Slice of latest account balances, sorted by currency
-//     如果没有记录，返回空切片 / Returns empty slice if no records
+//   - []models.AccountBalance: 最新的账户余额切片，按币种排序 / Slice of latest account balances, sorted by currency
 //   - error: 数据库查询失败时返回错误 / Error on database query failure
 func (s *Storage) GetLatestAccountBalances() ([]models.AccountBalance, error) {
-	query := `
-		SELECT id, timestamp, currency, balance, available, frozen, equity
-		FROM account_balances
-		WHERE timestamp = (SELECT MAX(timestamp) FROM account_balances)
-		ORDER BY currency
-	`
-
-	rows, err := s.db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query latest balances: %w", err)
-	}
-	defer rows.Close()
-
 	var balances []models.AccountBalance
-	for rows.Next() {
-		var b models.AccountBalance
-		var timestamp string
-		if err := rows.Scan(&b.ID, &timestamp, &b.Currency, &b.Balance, &b.Available, &b.Frozen, &b.Equity); err != nil {
-			return nil, fmt.Errorf("failed to scan balance: %w", err)
-		}
 
-		// Parse timestamp (SQLite stores in RFC3339 format)
-		b.Timestamp, err = time.Parse(time.RFC3339, timestamp)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
-		}
+	// Subquery to get latest timestamp
+	subQuery := s.db.Model(&models.AccountBalance{}).
+		Select("MAX(timestamp)")
 
-		balances = append(balances, b)
+	// Main query: filter by latest timestamp
+	err := s.db.Where("timestamp = (?)", subQuery).
+		Order("currency").
+		Find(&balances).Error
+
+	return balances, err
+}
+
+// GetAccountBalancesByTimeRange 按时间范围查询账户余额 / Query account balances by time range
+// 查询指定币种在时间范围内的账户余额记录
+// Query account balance records for specified currency within time range
+//
+// Parameters:
+//   - currency: Currency to query (e.g., "BTC", "USDT")
+//   - startTime: Start time of the range (inclusive)
+//   - endTime: End time of the range (inclusive)
+//
+// Returns:
+//   - []models.AccountBalance: 账户余额记录切片，按时间升序 / Account balance records, ordered by time ASC
+//   - error: 数据库查询失败时返回错误 / Error on database query failure
+func (s *Storage) GetAccountBalancesByTimeRange(currency string, startTime, endTime time.Time) ([]models.AccountBalance, error) {
+	var balances []models.AccountBalance
+
+	err := s.db.Where("currency = ? AND timestamp BETWEEN ? AND ?", currency, startTime.UTC(), endTime.UTC()).
+		Order("timestamp ASC").
+		Find(&balances).Error
+
+	return balances, err
+}
+
+// ============================================================================
+// Position Operations
+// ============================================================================
+
+// InsertPosition 插入持仓记录 / Insert position record
+// 将持仓数据写入positions表，记录合约、持仓量、盈亏等信息
+// Write position data to positions table with contract, position size, PnL info
+//
+// Parameters:
+//   - position: Position data model, must contain valid Instrument, PositionSide, PositionSize fields
+//
+// Returns:
+//   - error: 数据验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
+func (s *Storage) InsertPosition(position *models.Position) error {
+	if err := position.Validate(); err != nil {
+		return fmt.Errorf("invalid position: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
-	}
-
-	return balances, nil
+	result := s.db.Create(position)
+	return result.Error
 }
 
 // GetLatestPositions 获取最新的持仓 / Get latest positions
-// Returns only positions from the most recent snapshot.
-// NOTE: This function is now mainly used for historical data analysis.
+// 查询最新时间戳的所有持仓记录
+// Query all position records with the latest timestamp
+//
+// NOTE: This function is mainly used for historical data analysis.
 // TPSL service fetches positions directly from OKX API for real-time accuracy.
+//
+// Returns:
+//   - []models.Position: 最新的持仓切片，按合约排序 / Slice of latest positions, sorted by instrument
+//   - error: 数据库查询失败时返回错误 / Error on database query failure
 func (s *Storage) GetLatestPositions() ([]models.Position, error) {
-	// First, get the latest timestamp
-	var latestTimestamp string
-	err := s.db.QueryRow("SELECT MAX(timestamp) FROM positions").Scan(&latestTimestamp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get latest timestamp: %w", err)
-	}
+	// Use subquery to get positions with the latest timestamp
+	var positions []models.Position
 
-	// If no positions in database yet, return empty slice
-	if latestTimestamp == "" {
-		return []models.Position{}, nil
-	}
+	subQuery := s.db.Model(&models.Position{}).
+		Select("MAX(timestamp)")
 
-	query := `
-		SELECT id, timestamp, instrument, position_side, position_size, average_price, unrealized_pnl, margin, leverage, margin_mode
-		FROM positions
-		WHERE timestamp = ?
-		ORDER BY instrument
-	`
+	err := s.db.Where("timestamp = (?)", subQuery).
+		Order("instrument").
+		Find(&positions).Error
 
-	rows, err := s.db.Query(query, latestTimestamp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest positions: %w", err)
-	}
-	defer rows.Close()
-
-	var positions []models.Position
-	for rows.Next() {
-		var p models.Position
-		var timestamp string
-		if err := rows.Scan(&p.ID, &timestamp, &p.Instrument, &p.PositionSide, &p.PositionSize, &p.AveragePrice, &p.UnrealizedPnL, &p.Margin, &p.Leverage, &p.MarginMode); err != nil {
-			return nil, fmt.Errorf("failed to scan position: %w", err)
-		}
-
-		// Parse timestamp (SQLite stores in RFC3339 format)
-		p.Timestamp, err = time.Parse(time.RFC3339, timestamp)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
-		}
-
-		positions = append(positions, p)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 
 	return positions, nil
 }
 
-// GetAccountBalancesByTimeRange 按时间范围查询账户余额 / Query account balances by time range
-func (s *Storage) GetAccountBalancesByTimeRange(currency string, startTime, endTime time.Time) ([]models.AccountBalance, error) {
-	query := `
-		SELECT id, timestamp, currency, balance, available, frozen, equity
-		FROM account_balances
-		WHERE currency = ? AND timestamp BETWEEN ? AND ?
-		ORDER BY timestamp ASC
-	`
-
-	rows, err := s.db.Query(query, currency, startTime.UTC(), endTime.UTC())
-	if err != nil {
-		return nil, fmt.Errorf("failed to query balances by time range: %w", err)
-	}
-	defer rows.Close()
-
-	var balances []models.AccountBalance
-	for rows.Next() {
-		var b models.AccountBalance
-		var timestamp string
-		if err := rows.Scan(&b.ID, &timestamp, &b.Currency, &b.Balance, &b.Available, &b.Frozen, &b.Equity); err != nil {
-			return nil, fmt.Errorf("failed to scan balance: %w", err)
-		}
-
-		// Parse timestamp (SQLite stores in RFC3339 format)
-		b.Timestamp, err = time.Parse(time.RFC3339, timestamp)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
-		}
-
-		balances = append(balances, b)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
-	}
-
-	return balances, nil
-}
-
-// Close 关闭数据库连接 / Close database connection
-func (s *Storage) Close() error {
-	if s.db != nil {
-		return s.db.Close()
-	}
-	return nil
-}
-
-// HealthCheck 健康检查 / Health check for database connectivity
-func (s *Storage) HealthCheck() error {
-	return s.db.Ping()
-}
-
 // ============================================================================
-// Order History Methods (Phase 1B)
-// ============================================================================
-// TODO: Implement actual database operations for order history tracking
+// Order History Operations
 // ============================================================================
 
-// InsertOrderHistory inserts an order history record into storage
-// 插入订单历史记录到数据库 / Insert order history record to database
+// InsertOrderHistory 插入订单历史记录 / Insert order history record
+// 将订单历史数据写入order_history表，使用幂等插入（基于order_id）
+// Write order history data to order_history table with idempotent insert (based on order_id)
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
-//   - order: Order history data model, must contain valid OrderID, InstId, Side, OrdType, Size fields
+//   - order: Order history data model, must contain valid OrderID, InstId, Side, Size fields
 //
 // Returns:
 //   - error: 数据验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
+//     成功时会将生成的ID回写到order.ID字段 / On success, generated ID is written back to order.ID
+//     幂等：如果order_id已存在，返回现有记录的ID / Idempotent: if order_id exists, returns existing record ID
 func (s *Storage) InsertOrderHistory(ctx context.Context, order *models.OrderHistory) error {
 	if err := order.Validate(); err != nil {
 		return fmt.Errorf("invalid order history: %w", err)
 	}
 
-	// Check if order with this order_id already exists to avoid duplicates
-	// This is important when syncing orders from OKX API
-	var existingID int64
-	checkQuery := `SELECT id FROM order_history WHERE order_id = ? LIMIT 1`
-	err := s.db.QueryRowContext(ctx, checkQuery, order.OrderID).Scan(&existingID)
+	// FirstOrCreate: find existing record OR create new one
+	// This provides idempotent insert behavior
+	result := s.db.WithContext(ctx).
+		Where("order_id = ?", order.OrderID).
+		FirstOrCreate(order)
 
-	if err == nil {
-		// Order already exists, skip insertion
-		order.ID = existingID
-		return nil // Not an error - idempotent operation
-	} else if err != sql.ErrNoRows {
-		// Real error occurred during check
-		return fmt.Errorf("failed to check existing order: %w", err)
-	}
-
-	// Order doesn't exist, proceed with insertion
-	query := `
-		INSERT INTO order_history (order_id, inst_id, side, ord_type, size, price, reduce_only, placed_at, week_start, status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	result, err := s.db.ExecContext(ctx, query,
-		order.OrderID,
-		order.InstId,
-		order.Side,
-		order.OrdType,
-		order.Size,
-		order.Price,
-		order.ReduceOnly,
-		order.PlacedAt.UTC(),
-		order.WeekStart.UTC(),
-		order.Status,
-		order.CreatedAt.UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert order history: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get last insert id: %w", err)
-	}
-
-	order.ID = id
-	return nil
+	return result.Error
 }
 
-// GetOrderCountForWeek returns the count of orders placed in a given week
-// 获取指定周的订单数量 / Get order count for specified week
+// GetOrderCountForWeek 获取指定周的订单数量 / Get order count for specified week
+// 统计指定周的订单总数
+// Count total orders for specified week
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
@@ -494,102 +266,41 @@ func (s *Storage) InsertOrderHistory(ctx context.Context, order *models.OrderHis
 //   - int: 该周的订单数量 / Order count for the week
 //   - error: 数据库查询失败时返回错误 / Error on database query failure
 func (s *Storage) GetOrderCountForWeek(ctx context.Context, weekStart time.Time) (int, error) {
-	query := `
-		SELECT COUNT(*)
-		FROM order_history
-		WHERE week_start = ?
-	`
+	var count int64
 
-	var count int
-	err := s.db.QueryRowContext(ctx, query, weekStart.UTC()).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get order count for week: %w", err)
-	}
+	err := s.db.WithContext(ctx).
+		Model(&models.OrderHistory{}).
+		Where("week_start = ?", weekStart.UTC()).
+		Count(&count).Error
 
-	return count, nil
+	return int(count), err
 }
 
-// GetOrdersForWeek retrieves all orders placed in a given week
-// 获取指定周的所有订单 / Get all orders for specified week
+// GetOrdersForWeek 获取指定周的所有订单 / Get all orders for specified week
+// 查询指定周的订单列表，按下单时间排序
+// Query order list for specified week, sorted by placed_at
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
 //   - weekStart: Start of the week (Monday 00:00:00 UTC)
 //
 // Returns:
-//   - []models.OrderHistory: 该周的订单列表，按下单时间排序 / Order list for the week, sorted by placed_at
+//   - []models.OrderHistory: 该周的订单列表 / Order list for the week
 //   - error: 数据库查询失败时返回错误 / Error on database query failure
 func (s *Storage) GetOrdersForWeek(ctx context.Context, weekStart time.Time) ([]models.OrderHistory, error) {
-	query := `
-		SELECT id, order_id, inst_id, side, ord_type, size, price, reduce_only, placed_at, week_start, status, created_at
-		FROM order_history
-		WHERE week_start = ?
-		ORDER BY placed_at ASC
-	`
-
-	rows, err := s.db.QueryContext(ctx, query, weekStart.UTC())
-	if err != nil {
-		return nil, fmt.Errorf("failed to query orders for week: %w", err)
-	}
-	defer rows.Close()
-
 	var orders []models.OrderHistory
-	for rows.Next() {
-		var order models.OrderHistory
-		var placedAt, weekStartStr, createdAt string
-		var price sql.NullString
 
-		err := rows.Scan(
-			&order.ID,
-			&order.OrderID,
-			&order.InstId,
-			&order.Side,
-			&order.OrdType,
-			&order.Size,
-			&price,
-			&order.ReduceOnly,
-			&placedAt,
-			&weekStartStr,
-			&order.Status,
-			&createdAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan order: %w", err)
-		}
+	err := s.db.WithContext(ctx).
+		Where("week_start = ?", weekStart.UTC()).
+		Order("placed_at ASC").
+		Find(&orders).Error
 
-		// Parse timestamps
-		order.PlacedAt, err = time.Parse(time.RFC3339, placedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse placed_at: %w", err)
-		}
-
-		order.WeekStart, err = time.Parse(time.RFC3339, weekStartStr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse week_start: %w", err)
-		}
-
-		order.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse created_at: %w", err)
-		}
-
-		// Handle nullable price
-		if price.Valid {
-			order.Price = price.String
-		}
-
-		orders = append(orders, order)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
-	}
-
-	return orders, nil
+	return orders, err
 }
 
-// GetWeeklyOrderStats retrieves aggregated order statistics for a week
-// 获取指定周的订单统计信息 / Get aggregated order statistics for specified week
+// GetWeeklyOrderStats 获取指定周的订单统计信息 / Get aggregated order statistics for specified week
+// 查询指定周的订单统计数据，包括按状态分类的订单数量
+// Query aggregated order statistics for specified week, including counts by status
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
@@ -599,82 +310,57 @@ func (s *Storage) GetOrdersForWeek(ctx context.Context, weekStart time.Time) ([]
 //   - *models.WeeklyOrderCount: 周订单统计数据 / Weekly order statistics
 //   - error: 数据库查询失败时返回错误 / Error on database query failure
 func (s *Storage) GetWeeklyOrderStats(ctx context.Context, weekStart time.Time) (*models.WeeklyOrderCount, error) {
-	query := `
-		SELECT
+	stats := &models.WeeklyOrderCount{
+		WeekStart: weekStart.UTC(),
+	}
+
+	// Temporary struct for aggregation result
+	type AggResult struct {
+		TotalOrders      int
+		ReduceOnlyOrders int
+		PlacedOrders     int
+		FilledOrders     int
+		CanceledOrders   int
+		FailedOrders     int
+	}
+
+	var result AggResult
+	err := s.db.Model(&models.OrderHistory{}).
+		WithContext(ctx).
+		Select(`
 			COUNT(*) as total_orders,
 			COALESCE(SUM(CASE WHEN reduce_only = 1 THEN 1 ELSE 0 END), 0) as reduce_only_orders,
 			COALESCE(SUM(CASE WHEN status = 'placed' THEN 1 ELSE 0 END), 0) as placed_orders,
 			COALESCE(SUM(CASE WHEN status = 'filled' THEN 1 ELSE 0 END), 0) as filled_orders,
 			COALESCE(SUM(CASE WHEN status = 'canceled' THEN 1 ELSE 0 END), 0) as canceled_orders,
 			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed_orders
-		FROM order_history
-		WHERE week_start = ?
-	`
+		`).
+		Where("week_start = ?", weekStart.UTC()).
+		Scan(&result).Error
 
-	stats := &models.WeeklyOrderCount{
-		WeekStart: weekStart.UTC(),
-	}
-
-	err := s.db.QueryRowContext(ctx, query, weekStart.UTC()).Scan(
-		&stats.TotalOrders,
-		&stats.ReduceOnlyOrders,
-		&stats.PlacedOrders,
-		&stats.FilledOrders,
-		&stats.CanceledOrders,
-		&stats.FailedOrders,
-	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get weekly order stats: %w", err)
 	}
 
-	// Calculate RegularOrders (Total - ReduceOnly)
+	// Map result to stats
+	stats.TotalOrders = result.TotalOrders
+	stats.ReduceOnlyOrders = result.ReduceOnlyOrders
+	stats.PlacedOrders = result.PlacedOrders
+	stats.FilledOrders = result.FilledOrders
+	stats.CanceledOrders = result.CanceledOrders
+	stats.FailedOrders = result.FailedOrders
 	stats.RegularOrders = stats.TotalOrders - stats.ReduceOnlyOrders
 
 	return stats, nil
 }
 
 // ============================================================================
-// Pending Confirmation Methods (Phase 1B)
-// ============================================================================
-// TODO: Implement actual database operations for pending confirmations
+// Position History Operations
 // ============================================================================
 
-// InsertPendingConfirmation inserts a pending confirmation record
-func (s *Storage) InsertPendingConfirmation(ctx context.Context, conf *models.PendingConfirmation) error {
-	// TODO: Implement database INSERT
-	return fmt.Errorf("InsertPendingConfirmation not yet implemented")
-}
-
-// GetPendingConfirmationsDue retrieves confirmations that need checking
-func (s *Storage) GetPendingConfirmationsDue(ctx context.Context, now time.Time) ([]models.PendingConfirmation, error) {
-	// TODO: Implement database query with time filter
-	return nil, fmt.Errorf("GetPendingConfirmationsDue not yet implemented")
-}
-
-// GetPendingConfirmation retrieves a specific pending confirmation by order ID
-func (s *Storage) GetPendingConfirmation(ctx context.Context, orderID string) (*models.PendingConfirmation, error) {
-	// TODO: Implement database query by orderID
-	return nil, fmt.Errorf("GetPendingConfirmation not yet implemented")
-}
-
-// UpdatePendingConfirmation updates a pending confirmation record
-func (s *Storage) UpdatePendingConfirmation(ctx context.Context, orderID string, update *models.ConfirmationUpdate) error {
-	// TODO: Implement database UPDATE
-	return fmt.Errorf("UpdatePendingConfirmation not yet implemented")
-}
-
-// DeletePendingConfirmation removes a pending confirmation record
-func (s *Storage) DeletePendingConfirmation(ctx context.Context, orderID string) error {
-	// TODO: Implement database DELETE
-	return fmt.Errorf("DeletePendingConfirmation not yet implemented")
-}
-
-// ============================================================================
-// Position History Methods (V3.2)
-// ============================================================================
-
-// InsertPositionHistory inserts a position history record into storage
-// 插入历史仓位记录到数据库 / Insert position history record to database
+// InsertPositionHistory 插入历史仓位记录 / Insert position history record
+// 将历史仓位数据写入positions_history表，使用幂等插入（基于pos_id）
+// Write position history data to positions_history table with idempotent insert (based on pos_id)
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
@@ -682,74 +368,24 @@ func (s *Storage) DeletePendingConfirmation(ctx context.Context, orderID string)
 //
 // Returns:
 //   - error: 数据验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
+//     幂等：如果pos_id已存在，返回现有记录的ID / Idempotent: if pos_id exists, returns existing record ID
 func (s *Storage) InsertPositionHistory(ctx context.Context, position *models.PositionHistory) error {
 	if err := position.Validate(); err != nil {
 		return fmt.Errorf("invalid position history: %w", err)
 	}
 
-	// Check if position with this pos_id already exists to avoid duplicates
-	var existingID int64
-	checkQuery := `SELECT id FROM positions_history WHERE pos_id = ? LIMIT 1`
-	err := s.db.QueryRowContext(ctx, checkQuery, position.PosId).Scan(&existingID)
+	// FirstOrCreate: find existing record OR create new one
+	// This provides idempotent insert behavior
+	result := s.db.WithContext(ctx).
+		Where("pos_id = ?", position.PosId).
+		FirstOrCreate(position)
 
-	if err == nil {
-		// Position already exists, skip insertion
-		position.ID = existingID
-		return nil // Not an error - idempotent operation
-	} else if err != sql.ErrNoRows {
-		// Real error occurred during check
-		return fmt.Errorf("failed to check existing position: %w", err)
-	}
-
-	// Position doesn't exist, proceed with insertion
-	query := `
-		INSERT INTO positions_history (
-			pos_id, inst_type, inst_id, mgn_mode, pos_side, lever,
-			open_avg_px, close_avg_px, open_max_pos, close_total_pos,
-			realized_pnl, pnl, pnl_ratio, fee, funding_fee, liq_penalty,
-			close_type, direction, ccy, opened_at, closed_at, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	result, err := s.db.ExecContext(ctx, query,
-		position.PosId,
-		position.InstType,
-		position.InstId,
-		position.MgnMode,
-		position.PosSide,
-		position.Lever,
-		position.OpenAvgPx,
-		position.CloseAvgPx,
-		position.OpenMaxPos,
-		position.CloseTotalPos,
-		position.RealizedPnl,
-		position.Pnl,
-		position.PnlRatio,
-		position.Fee,
-		position.FundingFee,
-		position.LiqPenalty,
-		position.CloseType,
-		position.Direction,
-		position.Ccy,
-		position.OpenedAt.UTC(),
-		position.ClosedAt.UTC(),
-		position.CreatedAt.UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert position history: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get last insert id: %w", err)
-	}
-
-	position.ID = id
-	return nil
+	return result.Error
 }
 
-// GetPositionsHistory retrieves position history with optional filters
-// 获取历史仓位列表，支持按币种和时间过滤 / Get position history list with optional currency and time filters
+// GetPositionsHistory 获取历史仓位列表 / Get position history list
+// 查询历史仓位记录，支持按币种和数量限制过滤
+// Query position history records with optional filters for instrument and limit
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
@@ -760,89 +396,95 @@ func (s *Storage) InsertPositionHistory(ctx context.Context, position *models.Po
 //   - []models.PositionHistory: 历史仓位列表，按关闭时间倒序 / Position history list, sorted by closed_at DESC
 //   - error: 数据库查询失败时返回错误 / Error on database query failure
 func (s *Storage) GetPositionsHistory(ctx context.Context, instId string, limit int) ([]models.PositionHistory, error) {
-	query := `
-		SELECT id, pos_id, inst_type, inst_id, mgn_mode, pos_side, lever,
-			   open_avg_px, close_avg_px, open_max_pos, close_total_pos,
-			   realized_pnl, pnl, pnl_ratio, fee, funding_fee, liq_penalty,
-			   close_type, direction, ccy, opened_at, closed_at, created_at
-		FROM positions_history
-	`
-
-	var args []any
-	if instId != "" {
-		query += ` WHERE inst_id = ?`
-		args = append(args, instId)
-	}
-
-	query += ` ORDER BY closed_at DESC`
-
-	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
-	}
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query positions history: %w", err)
-	}
-	defer rows.Close()
-
 	var positions []models.PositionHistory
-	for rows.Next() {
-		var position models.PositionHistory
-		var openedAt, closedAt, createdAt string
 
-		err := rows.Scan(
-			&position.ID,
-			&position.PosId,
-			&position.InstType,
-			&position.InstId,
-			&position.MgnMode,
-			&position.PosSide,
-			&position.Lever,
-			&position.OpenAvgPx,
-			&position.CloseAvgPx,
-			&position.OpenMaxPos,
-			&position.CloseTotalPos,
-			&position.RealizedPnl,
-			&position.Pnl,
-			&position.PnlRatio,
-			&position.Fee,
-			&position.FundingFee,
-			&position.LiqPenalty,
-			&position.CloseType,
-			&position.Direction,
-			&position.Ccy,
-			&openedAt,
-			&closedAt,
-			&createdAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan position: %w", err)
-		}
+	query := s.db.WithContext(ctx)
 
-		// Parse timestamps
-		position.OpenedAt, err = time.Parse(time.RFC3339, openedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse opened_at: %w", err)
-		}
-
-		position.ClosedAt, err = time.Parse(time.RFC3339, closedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse closed_at: %w", err)
-		}
-
-		position.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse created_at: %w", err)
-		}
-
-		positions = append(positions, position)
+	// Optional filter: instrument ID
+	if instId != "" {
+		query = query.Where("inst_id = ?", instId)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
+	// Order by closed_at DESC
+	query = query.Order("closed_at DESC")
+
+	// Optional limit
+	if limit > 0 {
+		query = query.Limit(limit)
 	}
 
-	return positions, nil
+	err := query.Find(&positions).Error
+	return positions, err
+}
+
+// ============================================================================
+// Pending Confirmation Operations (NOT IMPLEMENTED)
+// ============================================================================
+// These 5 methods are not implemented in this migration.
+// They will be implemented in Feature 3 Phase 1B.
+// ============================================================================
+
+// InsertPendingConfirmation 插入待确认订单记录 / Insert pending confirmation record
+// NOTE: Not yet implemented - will be added in Feature 3 Phase 1B
+func (s *Storage) InsertPendingConfirmation(ctx context.Context, conf *models.PendingConfirmation) error {
+	return fmt.Errorf("InsertPendingConfirmation not yet implemented")
+}
+
+// GetPendingConfirmationsDue 获取到期的待确认订单 / Get pending confirmations due
+// NOTE: Not yet implemented - will be added in Feature 3 Phase 1B
+func (s *Storage) GetPendingConfirmationsDue(ctx context.Context, now time.Time) ([]models.PendingConfirmation, error) {
+	return nil, fmt.Errorf("GetPendingConfirmationsDue not yet implemented")
+}
+
+// GetPendingConfirmation 获取指定订单的待确认记录 / Get pending confirmation by order ID
+// NOTE: Not yet implemented - will be added in Feature 3 Phase 1B
+func (s *Storage) GetPendingConfirmation(ctx context.Context, orderID string) (*models.PendingConfirmation, error) {
+	return nil, fmt.Errorf("GetPendingConfirmation not yet implemented")
+}
+
+// UpdatePendingConfirmation 更新待确认订单记录 / Update pending confirmation record
+// NOTE: Not yet implemented - will be added in Feature 3 Phase 1B
+func (s *Storage) UpdatePendingConfirmation(ctx context.Context, orderID string, update *models.ConfirmationUpdate) error {
+	return fmt.Errorf("UpdatePendingConfirmation not yet implemented")
+}
+
+// DeletePendingConfirmation 删除待确认订单记录 / Delete pending confirmation record
+// NOTE: Not yet implemented - will be added in Feature 3 Phase 1B
+func (s *Storage) DeletePendingConfirmation(ctx context.Context, orderID string) error {
+	return fmt.Errorf("DeletePendingConfirmation not yet implemented")
+}
+
+// ============================================================================
+// Utility Operations
+// ============================================================================
+
+// Close 关闭数据库连接 / Close database connection
+// 优雅关闭数据库连接，释放资源
+// Gracefully close database connection and release resources
+//
+// Returns:
+//   - error: 关闭失败时返回错误 / Error on closure failure
+func (s *Storage) Close() error {
+	if s.db != nil {
+		sqlDB, err := s.db.DB()
+		if err != nil {
+			return fmt.Errorf("failed to get underlying database: %w", err)
+		}
+		return sqlDB.Close()
+	}
+	return nil
+}
+
+// HealthCheck 健康检查 / Health check for database connectivity
+// 检查数据库连接是否正常
+// Check if database connection is healthy
+//
+// Returns:
+//   - error: 连接失败时返回错误 / Error on connection failure
+func (s *Storage) HealthCheck() error {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying database: %w", err)
+	}
+	return sqlDB.Ping()
 }

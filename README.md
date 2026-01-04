@@ -43,6 +43,7 @@ TenyoJubaku follows a layered architecture:
 
 - Go 1.21 or higher
 - SQLite3
+- GORM v1.31+ (ORM for database operations)
 - OKX Exchange account with API credentials
 
 ## Installation
@@ -111,14 +112,16 @@ Press `Ctrl+C` to gracefully shut down the service.
 
 ## Database
 
-Account balances and positions are stored in SQLite at `data/tenyojubaku.db`.
+Account balances and positions are stored in SQLite at `data/tenyojubaku.db` using **GORM** (Go ORM).
 
-Tables:
+Tables (auto-migrated via GORM):
 - `account_balances`: Account balance snapshots (timestamp, currency, balance, available, frozen, equity)
   - **Only records BTC, ETH, and USDT** (other currencies are ignored)
 - `positions`: Position snapshots (timestamp, instrument, side, size, avg_price, unrealized_pnl, margin, leverage)
+- `order_history`: Order frequency tracking (order_id, inst_id, side, size, placed_at, week_start, status)
+- `positions_history`: Closed positions tracking (pos_id, inst_id, open_avg_px, close_avg_px, realized_pnl, etc.)
 
-All timestamps are stored in UTC.
+All timestamps are stored in UTC. Schema is managed by GORM AutoMigrate.
 
 ## Logging
 

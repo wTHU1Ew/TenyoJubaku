@@ -7,16 +7,21 @@ import (
 
 // Position 持仓信息 / Position data model
 type Position struct {
-	ID            int64        `json:"id" db:"id"`
-	Timestamp     time.Time    `json:"timestamp" db:"timestamp"`
-	Instrument    string       `json:"instrument" db:"instrument"`
-	PositionSide  PositionSide `json:"position_side" db:"position_side"`
-	PositionSize  float64      `json:"position_size" db:"position_size"`
-	AveragePrice  float64      `json:"average_price" db:"average_price"`
-	UnrealizedPnL float64      `json:"unrealized_pnl" db:"unrealized_pnl"`
-	Margin        float64      `json:"margin" db:"margin"`
-	Leverage      float64      `json:"leverage" db:"leverage"`
-	MarginMode    MarginMode   `json:"margin_mode" db:"margin_mode"`
+	ID            int64        `json:"id" db:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	Timestamp     time.Time    `json:"timestamp" db:"timestamp" gorm:"column:timestamp;type:datetime;not null;index:idx_positions_timestamp"`
+	Instrument    string       `json:"instrument" db:"instrument" gorm:"column:instrument;type:varchar(50);not null"`
+	PositionSide  PositionSide `json:"position_side" db:"position_side" gorm:"column:position_side;type:varchar(10);not null"`
+	PositionSize  float64      `json:"position_size" db:"position_size" gorm:"column:position_size;type:real;not null"`
+	AveragePrice  float64      `json:"average_price" db:"average_price" gorm:"column:average_price;type:real;not null"`
+	UnrealizedPnL float64      `json:"unrealized_pnl" db:"unrealized_pnl" gorm:"column:unrealized_pnl;type:real;not null"`
+	Margin        float64      `json:"margin" db:"margin" gorm:"column:margin;type:real;not null"`
+	Leverage      float64      `json:"leverage" db:"leverage" gorm:"column:leverage;type:real"`
+	MarginMode    MarginMode   `json:"margin_mode" db:"margin_mode" gorm:"column:margin_mode;type:varchar(10);default:cross"`
+}
+
+// TableName 指定表名 / Specify table name
+func (Position) TableName() string {
+	return "positions"
 }
 
 // Validate 验证持仓数据 / Validate position data

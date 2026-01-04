@@ -17,6 +17,15 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
+# TenyoJubaku Project Context
+
+**IMPORTANT**: Always read `@/openspec/project.md` for:
+- Project purpose and 2025/future features (trading restrictions, position management, order control)
+- Tech stack (Golang, SQLite/lightweight DB, Python)
+- Code style conventions (CamelCase, bilingual comments, layered design, ORM-only DB access)
+- Architecture patterns (object-oriented, loose coupling, consistent external interface)
+- Testing strategy and documentation practices (progress tracking in docs/ directory)
+
 
 ✔ OpenSpec initialized successfully!
 

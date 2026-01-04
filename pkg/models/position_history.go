@@ -8,29 +8,34 @@ import (
 // PositionHistory represents a closed position record from OKX
 // 历史仓位记录（已平仓的仓位）
 type PositionHistory struct {
-	ID            int64     `json:"id"`            // Auto-increment ID
-	PosId         string    `json:"pos_id"`        // OKX Position ID (unique identifier)
-	InstType      string    `json:"inst_type"`     // Instrument type: SWAP, FUTURES, etc.
-	InstId        string    `json:"inst_id"`       // Instrument ID: BTC-USD-SWAP
-	MgnMode       string    `json:"mgn_mode"`      // Margin mode: cross, isolated
-	PosSide       string    `json:"pos_side"`      // Position side: long, short, net
-	Lever         string    `json:"lever"`         // Leverage
-	OpenAvgPx     string    `json:"open_avg_px"`   // Average opening price
-	CloseAvgPx    string    `json:"close_avg_px"`  // Average closing price
-	OpenMaxPos    string    `json:"open_max_pos"`  // Maximum position size
-	CloseTotalPos string    `json:"close_total_pos"` // Total closed position size
-	RealizedPnl   string    `json:"realized_pnl"`  // Realized profit/loss
-	Pnl           string    `json:"pnl"`           // PnL (excluding fees)
-	PnlRatio      string    `json:"pnl_ratio"`     // PnL ratio
-	Fee           string    `json:"fee"`           // Accumulated fee
-	FundingFee    string    `json:"funding_fee"`   // Accumulated funding fee
-	LiqPenalty    string    `json:"liq_penalty"`   // Liquidation penalty
-	CloseType     string    `json:"close_type"`    // 1=partial, 2=all, 3=liq, 4=partial_liq, 5=adl
-	Direction     string    `json:"direction"`     // long or short
-	Ccy           string    `json:"ccy"`           // Margin currency
-	OpenedAt      time.Time `json:"opened_at"`     // Position created time
-	ClosedAt      time.Time `json:"closed_at"`     // Position closed/updated time
-	CreatedAt     time.Time `json:"created_at"`    // Local record created time
+	ID            int64     `json:"id" db:"id" gorm:"column:id;primaryKey;autoIncrement"`                                                    // Auto-increment ID
+	PosId         string    `json:"pos_id" db:"pos_id" gorm:"column:pos_id;type:text;not null;uniqueIndex:idx_positions_history_pos_id"`   // OKX Position ID (unique identifier)
+	InstType      string    `json:"inst_type" db:"inst_type" gorm:"column:inst_type;type:text;not null"`                                   // Instrument type: SWAP, FUTURES, etc.
+	InstId        string    `json:"inst_id" db:"inst_id" gorm:"column:inst_id;type:text;not null;index:idx_positions_history_inst_id"`     // Instrument ID: BTC-USD-SWAP
+	MgnMode       string    `json:"mgn_mode" db:"mgn_mode" gorm:"column:mgn_mode;type:text;not null"`                                      // Margin mode: cross, isolated
+	PosSide       string    `json:"pos_side" db:"pos_side" gorm:"column:pos_side;type:text;not null"`                                      // Position side: long, short, net
+	Lever         string    `json:"lever" db:"lever" gorm:"column:lever;type:text;not null"`                                               // Leverage
+	OpenAvgPx     string    `json:"open_avg_px" db:"open_avg_px" gorm:"column:open_avg_px;type:text;not null"`                             // Average opening price
+	CloseAvgPx    string    `json:"close_avg_px" db:"close_avg_px" gorm:"column:close_avg_px;type:text;not null"`                          // Average closing price
+	OpenMaxPos    string    `json:"open_max_pos" db:"open_max_pos" gorm:"column:open_max_pos;type:text;not null"`                          // Maximum position size
+	CloseTotalPos string    `json:"close_total_pos" db:"close_total_pos" gorm:"column:close_total_pos;type:text;not null"`                 // Total closed position size
+	RealizedPnl   string    `json:"realized_pnl" db:"realized_pnl" gorm:"column:realized_pnl;type:text;not null"`                          // Realized profit/loss
+	Pnl           string    `json:"pnl" db:"pnl" gorm:"column:pnl;type:text;not null"`                                                     // PnL (excluding fees)
+	PnlRatio      string    `json:"pnl_ratio" db:"pnl_ratio" gorm:"column:pnl_ratio;type:text;not null"`                                   // PnL ratio
+	Fee           string    `json:"fee" db:"fee" gorm:"column:fee;type:text;not null"`                                                     // Accumulated fee
+	FundingFee    string    `json:"funding_fee" db:"funding_fee" gorm:"column:funding_fee;type:text;not null"`                             // Accumulated funding fee
+	LiqPenalty    string    `json:"liq_penalty" db:"liq_penalty" gorm:"column:liq_penalty;type:text;not null"`                             // Liquidation penalty
+	CloseType     string    `json:"close_type" db:"close_type" gorm:"column:close_type;type:text;not null;index:idx_positions_history_close_type"` // 1=partial, 2=all, 3=liq, 4=partial_liq, 5=adl
+	Direction     string    `json:"direction" db:"direction" gorm:"column:direction;type:text;not null"`                                   // long or short
+	Ccy           string    `json:"ccy" db:"ccy" gorm:"column:ccy;type:text;not null"`                                                     // Margin currency
+	OpenedAt      time.Time `json:"opened_at" db:"opened_at" gorm:"column:opened_at;type:datetime;not null"`                               // Position created time
+	ClosedAt      time.Time `json:"closed_at" db:"closed_at" gorm:"column:closed_at;type:datetime;not null;index:idx_positions_history_closed_at"` // Position closed/updated time
+	CreatedAt     time.Time `json:"created_at" db:"created_at" gorm:"column:created_at;type:datetime;not null;default:CURRENT_TIMESTAMP"`  // Local record created time
+}
+
+// TableName 指定表名 / Specify table name
+func (PositionHistory) TableName() string {
+	return "positions_history"
 }
 
 // Validate validates the PositionHistory data

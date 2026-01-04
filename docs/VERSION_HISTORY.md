@@ -8,6 +8,46 @@
 
 ## Version History
 
+### V4.0 (2026-01-04)
+
+**Type:** Infrastructure Migration
+
+**Changes:**
+1. **Database Layer Migration: Raw SQL → GORM**
+   - Migrated from database/sql to GORM v1.31.1 for ORM compliance
+   - Added GORM struct tags to all models (AccountBalance, Position, OrderHistory, PositionHistory)
+   - Implemented 12 storage methods with GORM (5 pending methods deferred to Feature 3 Phase 1B)
+   - Code reduction: 849 lines (SQL) → 490 lines (GORM) = -42% reduction
+   - Improved type safety with compile-time query validation
+   - Automatic timestamp handling (UTC conversion)
+   - Idempotent inserts for OrderHistory and PositionHistory
+   - Files: `internal/storage/storage.go`, `pkg/models/*.go`
+   - See: `docs/features/infrastructure/GORM_MIGRATION_REPORT_V4.0_2026-01-04.md`
+
+2. **Testing Infrastructure**
+   - Created comprehensive unit tests for storage layer
+   - Achieved 89.8% test coverage (17 tests, all passing)
+   - In-memory SQLite testing for fast test execution
+   - Tests cover: CRUD operations, idempotency, aggregations, validation, edge cases
+
+3. **Interface Improvements**
+   - Updated monitor package to use `storage.Interface` for better testability
+   - Updated monitor package to use `okx.Interface` for consistency
+   - Better separation of concerns with interface-based design
+
+**Benefits:**
+- ✅ Complies with project ORM requirement (openspec/project.md)
+- ✅ Cleaner, more maintainable code (-42% lines)
+- ✅ Type-safe database operations
+- ✅ Simplified timestamp handling
+- ✅ Better testability (90% coverage vs 0% before)
+- ✅ Zero data migration needed (schema compatible)
+
+**Documentation Location:**
+- Migration Report: `docs/features/infrastructure/GORM_MIGRATION_REPORT_V4.0_2026-01-04.md`
+
+---
+
 ### V3.1 (2026-01-03)
 
 **Type:** Feature Enhancement

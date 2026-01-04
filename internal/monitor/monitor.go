@@ -14,8 +14,8 @@ import (
 
 // Monitor 监控服务 / Monitoring service
 type Monitor struct {
-	okxClient     *okx.Client
-	storage       *storage.Storage
+	okxClient     okx.Interface
+	storage       storage.Interface
 	logger        *logger.Logger
 	interval      time.Duration
 	stopChan      chan struct{}
@@ -36,7 +36,7 @@ type Monitor struct {
 //
 // Returns:
 //   - *Monitor: 已配置的监控服务实例 / Configured monitoring service instance ready to start
-func New(okxClient *okx.Client, storage *storage.Storage, logger *logger.Logger, intervalSeconds int) *Monitor {
+func New(okxClient okx.Interface, storage storage.Interface, logger *logger.Logger, intervalSeconds int) *Monitor {
 	return &Monitor{
 		okxClient: okxClient,
 		storage:   storage,
