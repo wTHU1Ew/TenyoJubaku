@@ -39,8 +39,17 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
+	// Build DSN with critical PRAGMA settings
+	// CRITICAL: Both _busy_timeout and _journal_mode MUST be set in DSN
+	// Setting them after gorm.Open() causes database locks when opening concurrent connections
+	// Root cause: Converting journal mode requires exclusive lock, blocking other connections
+	dsn := dbPath + "?_busy_timeout=5000"
+	if walMode {
+		dsn += "&_journal_mode=WAL"
+	}
+
 	// Open GORM connection
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -61,18 +70,9 @@ func New(dbPath string, walMode bool, maxOpenConns, maxIdleConns int) (*Storage,
 	sqlDB.SetMaxOpenConns(maxOpenConns)
 	sqlDB.SetMaxIdleConns(maxIdleConns)
 
-	// Set busy_timeout first, before any other operations
-	// This is CRITICAL for concurrent access - must be set before WAL mode
-	if err := db.Exec("PRAGMA busy_timeout=5000").Error; err != nil {
-		return nil, fmt.Errorf("failed to set busy_timeout: %w", err)
-	}
-
-	// Enable WAL mode if requested
-	if walMode {
-		if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
-			return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
-		}
-	}
+	// Note: busy_timeout and journal_mode are already set in DSN
+	// This ensures they take effect during gorm.Open() and AutoMigrate
+	// Prevents "database is locked" errors on concurrent connections
 
 	// Performance optimizations for SQLite
 	db.Exec("PRAGMA synchronous=NORMAL")        // 平衡性能和安全性 / Balance performance and safety
