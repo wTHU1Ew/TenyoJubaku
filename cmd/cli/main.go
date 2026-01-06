@@ -437,6 +437,63 @@ func handleOrderList() {
 
 			fmt.Printf("Synced %d orders from OKX API\n\n", syncedCount)
 		}
+
+		// Display current active orders (pending orders)
+		fmt.Printf("═══════════════════════════════════════════════\n")
+		fmt.Printf("Current Active Orders\n")
+		fmt.Printf("═══════════════════════════════════════════════\n\n")
+
+		// Get pending regular orders
+		pendingResp, err := okxClient.GetPendingOrders(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to fetch pending orders: %v\n", err)
+		} else if len(pendingResp.Data) > 0 {
+			fmt.Printf("Pending Orders (%d):\n", len(pendingResp.Data))
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "INSTRUMENT\tSIDE\tTYPE\tSIZE\tPRICE\tSTATUS")
+			fmt.Fprintln(w, "──────────\t────\t────\t────\t─────\t──────")
+			for _, order := range pendingResp.Data {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					order.InstId, order.Side, order.OrdType, order.Sz, order.Px, order.State)
+			}
+			w.Flush()
+			fmt.Println()
+		}
+
+		// Get pending algo orders (TPSL, conditional)
+		algoResp, err := okxClient.GetPendingAlgoOrders(ctx, "conditional")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to fetch pending algo orders: %v\n", err)
+		} else if len(algoResp.Data) > 0 {
+			fmt.Printf("Pending TPSL/Conditional Orders (%d):\n", len(algoResp.Data))
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "INSTRUMENT\tSIDE\tTRIGGER\tORD_PRICE\tSIZE\tSTATUS")
+			fmt.Fprintln(w, "──────────\t────\t───────\t─────────\t────\t──────")
+			for _, order := range algoResp.Data {
+				trigger := ""
+				ordPx := ""
+				if order.SlTriggerPx != "" {
+					trigger = "SL:" + order.SlTriggerPx
+					ordPx = order.SlOrdPx
+				} else if order.TpTriggerPx != "" {
+					trigger = "TP:" + order.TpTriggerPx
+					ordPx = order.TpOrdPx
+				}
+				if ordPx == "-1" {
+					ordPx = "market"
+				} else if ordPx == "" {
+					ordPx = "N/A"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					order.InstId, order.Side, trigger, ordPx, order.Sz, order.State)
+			}
+			w.Flush()
+			fmt.Println()
+		}
+
+		if len(pendingResp.Data) == 0 && len(algoResp.Data) == 0 {
+			fmt.Printf("No active orders.\n\n")
+		}
 	}
 
 	// Get current week start
@@ -444,15 +501,15 @@ func handleOrderList() {
 	weekStart := models.GetWeekStart(now)
 
 	// Get orders for current week from local database
+	fmt.Printf("═══════════════════════════════════════════════\n")
+	fmt.Printf("Historical Orders (Week Starting %s)\n", weekStart.Format("2006-01-02"))
+	fmt.Printf("═══════════════════════════════════════════════\n\n")
+
 	orders, err := db.GetOrdersForWeek(ctx, weekStart)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get orders: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Display orders
-	fmt.Printf("Recent Orders (Week Starting %s)\n", weekStart.Format("2006-01-02"))
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	if len(orders) == 0 {
 		fmt.Printf("No orders found for this week.\n")
@@ -681,9 +738,55 @@ func handlePositionList() {
 
 			fmt.Printf("Synced %d positions from OKX API\n\n", syncedCount)
 		}
+
+		// Display current open positions
+		fmt.Printf("\n═══════════════════════════════════════════════\n")
+		fmt.Printf("Current Open Positions\n")
+		fmt.Printf("═══════════════════════════════════════════════\n\n")
+
+		// Get current positions from OKX
+		posResp, err := okxClient.GetPositions(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to fetch current positions: %v\n", err)
+		} else {
+			// Filter positions with non-zero size
+			openPositions := []okx.PositionData{}
+			for _, pos := range posResp.Data {
+				if pos.Pos != "" && pos.Pos != "0" {
+					openPositions = append(openPositions, pos)
+				}
+			}
+
+			if len(openPositions) > 0 {
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "INSTRUMENT\tSIDE\tSIZE\tENTRY PX\tMARK PX\tUNREALIZED PNL\tLEVERAGE")
+				fmt.Fprintln(w, "──────────\t────\t────\t────────\t───────\t──────────────\t────────")
+				for _, pos := range openPositions {
+					// Format unrealized PNL with + or - sign
+					pnlStr := pos.Upl
+					if pnlStr != "" && pnlStr != "0" && pnlStr[0] != '-' {
+						pnlStr = "+" + pnlStr
+					}
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+						pos.InstId, pos.PosSide, pos.Pos, pos.AvgPx, pos.MarkPx, pnlStr, pos.Lever)
+				}
+				w.Flush()
+				fmt.Println()
+			} else {
+				fmt.Printf("No open positions.\n\n")
+			}
+		}
 	}
 
 	// Get positions from local database
+	fmt.Printf("═══════════════════════════════════════════════\n")
+	if *instrument != "" {
+		fmt.Printf("Position History for %s\n", *instrument)
+	} else {
+		fmt.Printf("Position History\n")
+	}
+	fmt.Printf("═══════════════════════════════════════════════\n\n")
+
 	displayLimit := 0
 	if *limit > 0 {
 		displayLimit = *limit
@@ -694,14 +797,6 @@ func handlePositionList() {
 		fmt.Fprintf(os.Stderr, "Failed to get positions: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Display positions
-	if *instrument != "" {
-		fmt.Printf("Position History for %s\n", *instrument)
-	} else {
-		fmt.Printf("Position History (Recent %d positions)\n", len(positions))
-	}
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	if len(positions) == 0 {
 		fmt.Printf("No positions found.\n")

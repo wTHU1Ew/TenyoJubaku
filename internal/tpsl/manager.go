@@ -591,7 +591,7 @@ func (m *Manager) placeTPSLOrderWithValidation(position *models.Position, size f
 			OrdType:         "conditional",
 			Sz:              formatFloat(size),
 			TpTriggerPx:     formatFloat(adjustedPrices.TpPrice),
-			TpOrdPx:         "-1", // Market order
+			TpOrdPx:         formatFloat(adjustedPrices.TpPrice), // Limit order at trigger price (Maker fee 0.02%)
 			TpTriggerPxType: "last",
 			ReduceOnly:      true,
 		}
@@ -690,7 +690,7 @@ func (m *Manager) placeTPSLOrderOriginal(position *models.Position, size float64
 		OrdType:         "conditional",
 		Sz:              formatFloat(size),
 		TpTriggerPx:     formatFloat(prices.TpPrice),
-		TpOrdPx:         "-1",
+		TpOrdPx:         formatFloat(prices.TpPrice), // Limit order at trigger price (Maker fee 0.02%)
 		TpTriggerPxType: "last",
 		ReduceOnly:      true,
 	}

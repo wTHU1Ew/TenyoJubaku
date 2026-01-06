@@ -8,6 +8,74 @@
 
 ## Version History
 
+### V4.5 (2026-01-06)
+
+**Type:** Feature Enhancement + Cost Optimization
+
+**Changes:**
+1. **TPSL Fee Optimization (Strategy A: Conservative SL + Efficient TP)**
+   - **Stop-Profit (TP)**: Changed from market order to **limit order at trigger price**
+     - Fee: ~~0.05% (Taker)~~ → **0.02% (Maker)** - Saves 60% on TP fees
+     - Execution: Limit order placed at exact trigger price for maximum Maker probability
+     - Risk: Low (TP can wait for favorable fill)
+   - **Stop-Loss (SL)**: Kept as **market order** for guaranteed execution
+     - Fee: 0.05% (Taker) - Unchanged
+     - Execution: Immediate market fill when triggered
+     - Risk: None (SL must execute reliably)
+   - **Overall Impact**: ~30% fee savings on average (TP+SL combined)
+   - Modified files: `internal/tpsl/manager.go` (lines 594, 693)
+
+2. **CLI Active Orders Display**
+   - `order list --sync=true` now shows **3 sections**:
+     1. **Current Active Orders** - Pending regular orders (limit, post_only, etc.)
+     2. **Current TPSL/Conditional Orders** - Pending algo orders with trigger prices
+        - Shows trigger price (TP:xxx or SL:xxx)
+        - Shows order price (limit price or "market")
+     3. **Historical Orders** - Completed orders from local database
+   - Example output:
+     ```
+     Current Active Orders
+     ═══════════════════════════
+     Pending Orders (2):
+     BTC-USD-SWAP  buy   limit  10  100000  live
+
+     Pending TPSL Orders (4):
+     BTC-USD-SWAP  sell  TP:105000  105000   10  live  ← New! Shows limit price
+     BTC-USD-SWAP  sell  SL:99000   market   10  live  ← Market order
+     ```
+
+3. **CLI Current Positions Display**
+   - `position list --sync=true` now shows **2 sections**:
+     1. **Current Open Positions** - Real-time positions with unrealized PNL
+        - Instrument, Side, Size, Entry Price, Mark Price, Unrealized PNL, Leverage
+     2. **Position History** - Closed positions from local database
+   - Example output:
+     ```
+     Current Open Positions
+     ═══════════════════════
+     BTC-USD-SWAP  long  10  100000  102000  +200.5  10x
+     ETH-USD-SWAP  short 50  3000    2950    +250.3  5x
+     ```
+
+**Technical Details:**
+- TPSL limit orders use same price as trigger: `TpOrdPx = TpTriggerPx`
+- CLI fetches active data via: `GetPendingOrders()`, `GetPendingAlgoOrders("conditional")`, `GetPositions()`
+- Historical data still uses local database for performance
+
+**Benefit Analysis:**
+Assuming 100 positions closed with TPSL:
+- **Before V4.5**: 100 × (0.05% TP + 0.05% SL) = **0.10% total**
+- **After V4.5**: 100 × (0.02% TP + 0.05% SL) = **0.07% total**
+- **Savings**: 30% reduction in TPSL execution costs
+
+**Files Modified:**
+- `internal/tpsl/manager.go` - TPSL fee optimization
+- `cmd/cli/main.go` - Active orders and positions display
+- `docs/VERSION_HISTORY.md` - Added V4.5 entry
+- `internal/version/version.go` - Updated to V4.5
+
+---
+
 ### V4.4 (2026-01-06)
 
 **Type:** Critical Bug Fix
