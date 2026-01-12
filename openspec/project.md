@@ -13,13 +13,15 @@ I need to design a complete trading system called TenyoJubaku (derived from the 
 
 3. Order frequency limit, modified through the configuration file, defaults to a maximum of 5 orders per week. Market trading is prohibited; the trader is only allowed to act as a maker, not a taker (unless it's for take-profit, in which case partial position is allowed, with a default maximum of 50% for takers). When maker, the price difference must be at least 1% different from the market price (default configuration) to avoid FOMO (Fear of Missing Out). Multiple order confirmations are required; even if the order is successfully placed, a confirmation notification is sent every 12 hours, with a 4-hour waiting time. If the timeout occurs, the order amount is modified to 50% of the current amount (all configuration items).
 
+4. some cli feature
+
 Next Year Features:
 
-4. Set up planned trading. This is to avoid missing some extreme market conditions. Since I mostly prefer left-side trading, I will list up to 3 price levels to capture possible spikes. The planned trades will be treated as special positions; this hasn't been designed yet, so I'll write about it later.
+1. Set up planned trading. This is to avoid missing some extreme market conditions. Since I mostly prefer left-side trading, I will list up to 3 price levels to capture possible spikes. The planned trades will be treated as special positions; this hasn't been designed yet, so I'll write about it later.
 
-5. Order entry notes, including logic (text) and market summary and review (recorded voice, AI summarizes into text). This hasn't been designed yet, so I'll write about it later.
+2. Order entry notes, including logic (text) and market summary and review (recorded voice, AI summarizes into text). This hasn't been designed yet, so I'll write about it later.
 
-6. On-chain data acquisition and summary. This hasn't been designed yet, so I'll write about it later.
+3. On-chain data acquisition and summary. This hasn't been designed yet, so I'll write about it later.
 
 ## Tech Stack
 [List your primary technologies]
