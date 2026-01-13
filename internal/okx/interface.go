@@ -61,6 +61,19 @@ type Interface interface {
 	// Returns error on API request failure, authentication failure, or invalid parameters.
 	PlaceAlgoOrder(ctx context.Context, req AlgoOrderRequest) (*AlgoOrderResponse, error)
 
+	// AmendAlgoOrder modifies an existing algorithmic order on the exchange.
+	// Used for updating TPSL trigger prices or order sizes for pending algo orders.
+	// This is critical for implementing dynamic trailing stop-loss functionality.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - req: Amend algo order request with algoId and new parameters
+	//
+	// Returns the response with algoId on success.
+	// Returns error on API request failure, authentication failure, or invalid parameters.
+	// Returns error if the algo order is not in a state that can be amended.
+	AmendAlgoOrder(ctx context.Context, req *AmendAlgoOrderRequest) (*AmendAlgoOrderResponse, error)
+
 	// PlaceOrder places a regular order on the exchange.
 	// Used for opening new positions or closing existing positions.
 	//

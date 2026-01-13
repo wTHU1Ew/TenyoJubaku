@@ -166,6 +166,96 @@ type Interface interface {
 	//
 	// Returns error if order not found or on database delete failure.
 	DeletePendingConfirmation(ctx context.Context, orderID string) error
+
+	// === Position History Operations ===
+
+	// InsertPositionHistory inserts a position history record into storage.
+	// Records closed positions for analysis and performance tracking.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - position: Position history record with PosId, InstId, CloseType, etc.
+	//
+	// Returns error on validation failure or database write failure.
+	InsertPositionHistory(ctx context.Context, position *models.PositionHistory) error
+
+	// GetPositionsHistory retrieves historical closed positions.
+	// Supports optional filtering by instrument and result limiting.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - instId: Instrument ID filter (empty string for all instruments)
+	//   - limit: Maximum number of records to return (0 for unlimited)
+	//
+	// Returns slice of position history records, ordered by ClosedAt desc.
+	// Returns empty slice if no records exist.
+	// Returns error on database query failure.
+	GetPositionsHistory(ctx context.Context, instId string, limit int) ([]models.PositionHistory, error)
+
+	// === Dynamic SL Tracker Operations (Feature 5 Phase 1) ===
+
+	// InsertDynamicSLTracker inserts a dynamic SL tracker record into storage.
+	// Used to persist dynamic stop-loss state for open positions.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - tracker: Dynamic SL tracker with PositionKey, EntryPrice, CurrentSlPrice, etc.
+	//
+	// Returns error on validation failure or database write failure.
+	InsertDynamicSLTracker(ctx context.Context, tracker *models.DynamicSLTracker) error
+
+	// GetDynamicSLTracker retrieves a dynamic SL tracker by position key.
+	// Position key format: "{instId}_{posSide}" (e.g., "BTC-USDT-SWAP_long")
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - positionKey: Unique position identifier
+	//
+	// Returns the dynamic SL tracker record.
+	// Returns error if not found (gorm.ErrRecordNotFound) or on database query failure.
+	GetDynamicSLTracker(ctx context.Context, positionKey string) (*models.DynamicSLTracker, error)
+
+	// UpdateDynamicSLTracker updates an existing dynamic SL tracker record.
+	// Updates highest/lowest price, firstMove status, current SL price, etc.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - tracker: Dynamic SL tracker with updated fields (must have valid ID)
+	//
+	// Returns error if tracker not found or on database update failure.
+	UpdateDynamicSLTracker(ctx context.Context, tracker *models.DynamicSLTracker) error
+
+	// DeleteDynamicSLTracker removes a dynamic SL tracker record.
+	// Used when a position is closed and tracking is no longer needed.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - positionKey: Unique position identifier
+	//
+	// Returns error if tracker not found or on database delete failure.
+	DeleteDynamicSLTracker(ctx context.Context, positionKey string) error
+
+	// GetAllDynamicSLTrackers retrieves all dynamic SL trackers.
+	// Used on service startup to reload tracking state.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//
+	// Returns slice of all dynamic SL tracker records.
+	// Returns empty slice if no trackers exist.
+	// Returns error on database query failure.
+	GetAllDynamicSLTrackers(ctx context.Context) ([]models.DynamicSLTracker, error)
+
+	// CleanupOrphanedTrackers removes trackers for positions that no longer exist.
+	// Used to prevent database from growing with stale tracker records.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout
+	//   - openPositionKeys: Slice of position keys for currently open positions
+	//
+	// Returns the number of trackers deleted.
+	// Returns error on database delete failure.
+	CleanupOrphanedTrackers(ctx context.Context, openPositionKeys []string) (int, error)
 }
 
 // Ensure Storage implements Interface at compile time

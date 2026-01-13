@@ -424,6 +424,58 @@ func (c *Client) PlaceAlgoOrder(ctx context.Context, req AlgoOrderRequest) (*Alg
 	return &resp, nil
 }
 
+// AmendAlgoOrder 修改算法订单 / Amend algo order
+// 修改现有算法订单的参数（如止盈止损触发价格）
+// Modify parameters of existing algo order (e.g., take-profit/stop-loss trigger prices)
+// 这是实现动态追踪止损的关键方法
+// This is the critical method for implementing dynamic trailing stop-loss
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - req: 修改算法订单请求 / Amend algo order request
+//     包含algoId（要修改的订单）和新参数（如新止损价格）
+//     Contains algoId (order to modify) and new parameters (e.g., new stop-loss price)
+//
+// Returns:
+//   - *AmendAlgoOrderResponse: 修改响应对象 / Amend response object
+//     包含Data字段，其中包含修改后的algoId
+//     Contains Data field with amended algoId
+//   - error: API请求失败或响应解析失败时返回错误 / Error on API request failure or response parsing failure
+//     可能原因包括: 网络错误、认证失败、API错误码非"0"、订单不存在或无法修改
+//     Possible causes: network error, authentication failure, API error code not "0", order not found or cannot be amended
+func (c *Client) AmendAlgoOrder(ctx context.Context, req *AmendAlgoOrderRequest) (*AmendAlgoOrderResponse, error) {
+	path := "/api/v5/trade/amend-algos"
+
+	// Marshal request to JSON
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	respBody, err := c.doRequestWithBody(ctx, "POST", path, string(reqBody))
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var resp AmendAlgoOrderResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Check for API error
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("API error: code=%s, msg=%s", resp.Code, resp.Msg)
+	}
+
+	// Check for order-specific errors
+	if len(resp.Data) > 0 && resp.Data[0].SCode != "" && resp.Data[0].SCode != "0" {
+		return nil, fmt.Errorf("order amendment error: code=%s, msg=%s", resp.Data[0].SCode, resp.Data[0].SMsg)
+	}
+
+	return &resp, nil
+}
+
 // GetTicker 获取行情数据 / Get ticker data
 // 从OKX API获取指定交易对的行情数据，包含最新成交价、买卖价等
 // Fetch ticker data for specified instrument from OKX API, including last price, bid/ask prices, etc.

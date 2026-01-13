@@ -32,6 +32,7 @@ type MockClient struct {
 	GetTickerCallCount           int
 	GetPendingAlgoOrdersCallCount int
 	PlaceAlgoOrderCallCount      int
+	AmendAlgoOrderCallCount      int
 	HealthCheckCallCount         int
 	PlaceOrderCallCount          int
 	AmendOrderCallCount          int
@@ -46,22 +47,26 @@ type MockClient struct {
 	GetTickerFunc           func(instId string) (*TickerResponse, error)
 	GetPendingAlgoOrdersFunc func(ordType string) (*PendingAlgoOrdersResponse, error)
 	PlaceAlgoOrderFunc      func(req AlgoOrderRequest) (*AlgoOrderResponse, error)
+	AmendAlgoOrderFunc      func(req *AmendAlgoOrderRequest) (*AmendAlgoOrderResponse, error)
 	HealthCheckFunc         func() error
 
 	// Optional: Store captured arguments for assertions
-	LastTickerInstId     string
-	LastAlgoOrdType      string
-	LastAlgoOrderRequest *AlgoOrderRequest
-	PlaceOrderArgs       []*OrderRequest
+	LastTickerInstId        string
+	LastAlgoOrdType         string
+	LastAlgoOrderRequest    *AlgoOrderRequest
+	LastAmendAlgoOrderRequest *AmendAlgoOrderRequest
+	PlaceOrderArgs          []*OrderRequest
 
 	// Configurable responses for new methods
-	PlaceOrderResponse        *OrderResponse
-	PlaceOrderError           error
-	AmendOrderResponse        *AmendOrderResponse
-	AmendOrderError           error
-	CancelOrderResponse       *CancelOrderResponse
-	CancelOrderError          error
-	GetPendingOrdersResponse  *PendingOrdersResponse
+	PlaceOrderResponse         *OrderResponse
+	PlaceOrderError            error
+	AmendOrderResponse         *AmendOrderResponse
+	AmendOrderError            error
+	AmendAlgoOrderResponse     *AmendAlgoOrderResponse
+	AmendAlgoOrderError        error
+	CancelOrderResponse        *CancelOrderResponse
+	CancelOrderError           error
+	GetPendingOrdersResponse   *PendingOrdersResponse
 	GetPendingOrdersError      error
 	GetOrdersHistoryResponse   *OrderHistoryResponse
 	GetOrdersHistoryError      error
@@ -252,6 +257,40 @@ func (m *MockClient) PlaceAlgoOrder(ctx context.Context, req AlgoOrderRequest) (
 		SMsg   string `json:"sMsg"`
 	}, 1)
 	resp.Data[0].AlgoId = fmt.Sprintf("mock-algo-%d", m.PlaceAlgoOrderCallCount)
+	resp.Data[0].SCode = "0"
+	resp.Data[0].SMsg = ""
+	return resp, nil
+}
+
+// AmendAlgoOrder mocks amending an algo order.
+func (m *MockClient) AmendAlgoOrder(ctx context.Context, req *AmendAlgoOrderRequest) (*AmendAlgoOrderResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.AmendAlgoOrderCallCount++
+	m.LastAmendAlgoOrderRequest = req
+
+	// If custom function is provided, use it
+	if m.AmendAlgoOrderFunc != nil {
+		return m.AmendAlgoOrderFunc(req)
+	}
+
+	// If custom response/error configured, use it
+	if m.AmendAlgoOrderResponse != nil || m.AmendAlgoOrderError != nil {
+		return m.AmendAlgoOrderResponse, m.AmendAlgoOrderError
+	}
+
+	// Default behavior: return success with the same algoId
+	resp := &AmendAlgoOrderResponse{
+		Code: "0",
+		Msg:  "",
+	}
+	resp.Data = make([]struct {
+		AlgoId string `json:"algoId"`
+		SCode  string `json:"sCode"`
+		SMsg   string `json:"sMsg"`
+	}, 1)
+	resp.Data[0].AlgoId = req.AlgoId
 	resp.Data[0].SCode = "0"
 	resp.Data[0].SMsg = ""
 	return resp, nil

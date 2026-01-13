@@ -175,7 +175,7 @@ func TestPositionValidate(t *testing.T) {
 				PositionSize: 1.0,
 			},
 			expectError: true,
-			errorMsg:    "position_side must be 'long', 'short', or 'net'",
+			errorMsg:    "invalid position_side: invalid (must be 'long', 'short', or 'net')",
 		},
 		{
 			name: "negative position_size",

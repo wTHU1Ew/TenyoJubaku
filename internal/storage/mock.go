@@ -202,3 +202,37 @@ func (m *MockStorage) UpdatePendingConfirmation(ctx context.Context, orderID str
 func (m *MockStorage) DeletePendingConfirmation(ctx context.Context, orderID string) error {
 	return nil
 }
+
+// Position History mock methods (stubs)
+func (m *MockStorage) InsertPositionHistory(ctx context.Context, position *models.PositionHistory) error {
+	return nil
+}
+
+func (m *MockStorage) GetPositionsHistory(ctx context.Context, instId string, limit int) ([]models.PositionHistory, error) {
+	return nil, nil
+}
+
+// Dynamic SL Tracker mock methods (stubs)
+func (m *MockStorage) InsertDynamicSLTracker(ctx context.Context, tracker *models.DynamicSLTracker) error {
+	return nil
+}
+
+func (m *MockStorage) GetDynamicSLTracker(ctx context.Context, positionKey string) (*models.DynamicSLTracker, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) UpdateDynamicSLTracker(ctx context.Context, tracker *models.DynamicSLTracker) error {
+	return nil
+}
+
+func (m *MockStorage) DeleteDynamicSLTracker(ctx context.Context, positionKey string) error {
+	return nil
+}
+
+func (m *MockStorage) GetAllDynamicSLTrackers(ctx context.Context) ([]models.DynamicSLTracker, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) CleanupOrphanedTrackers(ctx context.Context, openPositionKeys []string) (int, error) {
+	return 0, nil
+}

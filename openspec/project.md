@@ -17,11 +17,11 @@ I need to design a complete trading system called TenyoJubaku (derived from the 
 
 Next Year Features:
 
-1. Set up planned trading. This is to avoid missing some extreme market conditions. Since I mostly prefer left-side trading, I will list up to 3 price levels to capture possible spikes. The planned trades will be treated as special positions; this hasn't been designed yet, so I'll write about it later.
+5. Set up planned trading. This is to avoid missing some extreme market conditions. Since I mostly prefer left-side trading, I will list up to 3 price levels to capture possible spikes. 通常我会设置3个买入点位，分别是极端左侧、中间左侧和轻微左侧。每个点位的买入量可以通过配置文件设置，默认情况下，极端左侧买入80%，中间左侧买入50%，轻微左侧买入30%。极端左侧，中间左侧，轻微左侧理论上不会相互覆盖，以多单左侧交易举例，只有轻微左侧的止损被触发之后，之后价格再继续往下降才会到中间左侧的开单位置，只有中间左侧的止损被触发之后，之后价格再继续往下降才会到极端左侧的开单位置。止损逻辑默认为feature1的tpsl，除非手动设置了止损且覆盖全仓位，否则剩余仓位都会由tpsl按照配置文件设置默认止损。当价格达到某个点位时，系统会自动下单买入相应的数量。如果价格没有达到任何一个点位，则不会进行任何操作。如果只设置了一个order点位，则默认为轻微左侧，买入30%。如果设置了两个order点位，则默认为中间左侧买入50%和轻微左侧买入30%，如果设置了三个点位则为极端左侧，中间左侧，轻微左侧。当然也可以在cli下单的时候，通过启动参数强制要求当前下单的为极端左侧，中间左侧，轻微左其中一种。除此之外，还有一个很重要的交易策略为动态tpsl，以多头左侧为例，当当前价格相较于开单价格上涨超过1%（通过配置文件里的firstMove配置），则自动将止损设置为开单价格 *（1+0.001），这里的0.001是为了cover住交易手续费。如果价格继续上涨，则止损位置也会继续上移，出发firstMove之后，价格每上涨0.5%，则止损价格上移0.1%。当价格回落到止损位置时，全部仓位止损离场。当价格到达止盈位置时，全部仓位止盈离场。
 
-2. Order entry notes, including logic (text) and market summary and review (recorded voice, AI summarizes into text). This hasn't been designed yet, so I'll write about it later.
+6. Order entry notes, including logic (text) and market summary and review (recorded voice, AI summarizes into text). This hasn't been designed yet, so I'll write about it later.
 
-3. On-chain data acquisition and summary. This hasn't been designed yet, so I'll write about it later.
+7. On-chain data acquisition and summary. This hasn't been designed yet, so I'll write about it later.
 
 ## Tech Stack
 [List your primary technologies]

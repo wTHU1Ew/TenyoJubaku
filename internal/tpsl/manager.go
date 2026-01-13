@@ -8,6 +8,7 @@ import (
 	"github.com/wTHU1Ew/TenyoJubaku/internal/config"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/logger"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/okx"
+	"github.com/wTHU1Ew/TenyoJubaku/internal/storage"
 	"github.com/wTHU1Ew/TenyoJubaku/pkg/models"
 )
 
@@ -15,9 +16,14 @@ import (
 // 负责分析持仓TPSL覆盖情况并下单TPSL订单
 // Responsible for analyzing position TPSL coverage and placing TPSL orders
 type Manager struct {
-	config    *config.TPSLConfig
-	okxClient *okx.Client
-	logger    *logger.Logger
+	config          *config.TPSLConfig
+	dynamicSLConfig *config.DynamicSLConfig
+	okxClient       *okx.Client
+	storage         storage.Interface
+	logger          *logger.Logger
+
+	// Circuit breaker: track consecutive amendment failures
+	consecutiveAmendmentFailures int
 }
 
 // TPSLPrices TPSL价格 / TPSL prices
@@ -34,6 +40,12 @@ type CoverageSummary struct {
 	NotCovered        int
 	OrdersPlaced      int
 	PlacementFailures int
+
+	// Dynamic SL statistics
+	DynamicSLTracked      int // Number of positions being tracked
+	DynamicSLAdjustments  int // Number of SL adjustments made
+	DynamicSLFirstMoves   int // Number of firstMove triggers
+	DynamicSLFailures     int // Number of amendment failures
 }
 
 // New 创建TPSL管理器 / Create TPSL manager
@@ -42,16 +54,21 @@ type CoverageSummary struct {
 //
 // Parameters:
 //   - config: TPSL configuration
+//   - dynamicSLConfig: Dynamic SL configuration (can be nil if disabled)
 //   - okxClient: OKX API client
+//   - storage: Storage interface for database operations (can be nil if dynamic SL disabled)
 //   - logger: Logger instance
 //
 // Returns:
 //   - *Manager: TPSL管理器实例 / TPSL manager instance
-func New(config *config.TPSLConfig, okxClient *okx.Client, logger *logger.Logger) *Manager {
+func New(config *config.TPSLConfig, dynamicSLConfig *config.DynamicSLConfig, okxClient *okx.Client, storage storage.Interface, logger *logger.Logger) *Manager {
 	return &Manager{
-		config:    config,
-		okxClient: okxClient,
-		logger:    logger,
+		config:                       config,
+		dynamicSLConfig:              dynamicSLConfig,
+		okxClient:                    okxClient,
+		storage:                      storage,
+		logger:                       logger,
+		consecutiveAmendmentFailures: 0,
 	}
 }
 
@@ -126,6 +143,31 @@ func (m *Manager) AnalyzeAndPlaceTPSL(positions []*models.Position) (*CoverageSu
 		}
 
 		summary.OrdersPlaced++
+	}
+
+	// ===== Dynamic Trailing Stop-Loss (Feature 5 Phase 1) =====
+	// Check and adjust stop-loss for positions based on profit tracking
+	if m.dynamicSLConfig != nil && m.dynamicSLConfig.Enabled && m.storage != nil {
+		m.logger.Info("Starting dynamic SL check for %d positions (circuit breaker: %d failures)",
+			len(positions), m.consecutiveAmendmentFailures)
+
+		// Check circuit breaker
+		if m.consecutiveAmendmentFailures >= 10 {
+			m.logger.Error("Dynamic SL circuit breaker triggered: %d consecutive failures. Skipping dynamic SL this cycle.", m.consecutiveAmendmentFailures)
+			m.logger.Warn("To reset circuit breaker, resolve amendment issues and restart service or wait for manual intervention")
+		} else {
+			// Process dynamic SL for all positions
+			m.processDynamicSL(ctx, positions, algoOrders.Data, summary)
+
+			// Cleanup orphaned trackers (positions that no longer exist)
+			if err := m.cleanupOrphanedTrackers(ctx, positions); err != nil {
+				m.logger.Error("Failed to cleanup orphaned trackers: %v", err)
+			}
+		}
+
+		m.logger.Info("Dynamic SL check complete: tracked=%d, adjustments=%d, firstMoves=%d, failures=%d, circuit_breaker=%d",
+			summary.DynamicSLTracked, summary.DynamicSLAdjustments, summary.DynamicSLFirstMoves,
+			summary.DynamicSLFailures, m.consecutiveAmendmentFailures)
 	}
 
 	m.logger.Info("TPSL check complete: checked=%d, fully_covered=%d, partially_covered=%d, not_covered=%d, orders_placed=%d, failures=%d",
@@ -730,6 +772,230 @@ func (m *Manager) placeTPSLOrderOriginal(position *models.Position, size float64
 
 	if len(slResp.Data) > 0 {
 		m.logger.Info("Stop-Loss order placed for %s, algoId: %s", position.Instrument, slResp.Data[0].AlgoId)
+	}
+
+	return nil
+}
+
+// ===== Dynamic Trailing Stop-Loss Methods (Feature 5 Phase 1) =====
+
+// processDynamicSL 处理动态止损 / Process dynamic stop-loss
+// 为所有持仓检查并调整动态止损
+// Check and adjust dynamic stop-loss for all positions
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - positions: List of open positions
+//   - algoOrders: List of pending algo orders
+//   - summary: Coverage summary to update statistics
+func (m *Manager) processDynamicSL(ctx context.Context, positions []*models.Position, algoOrders []okx.AlgoOrder, summary *CoverageSummary) {
+	for _, position := range positions {
+		// Find SL order for this position
+		slOrders := m.findStopLossOrders(position, algoOrders)
+		if len(slOrders) == 0 {
+			m.logger.Debug("Position %s has no SL order, skipping dynamic SL", position.Instrument)
+			continue
+		}
+
+		// Use the first SL order (assuming single SL per position)
+		slOrder := slOrders[0]
+		currentSlPrice, err := strconv.ParseFloat(slOrder.SlTriggerPx, 64)
+		if err != nil {
+			m.logger.Error("Failed to parse SL trigger price for position %s: %v", position.Instrument, err)
+			continue
+		}
+
+		// Load or create tracker
+		tracker, err := LoadOrCreateTracker(ctx, m.storage, position, currentSlPrice)
+		if err != nil {
+			m.logger.Error("Failed to load/create tracker for position %s: %v", position.Instrument, err)
+			continue
+		}
+
+		summary.DynamicSLTracked++
+
+		// Get current market price
+		currentPrice, err := m.getCurrentMarketPrice(position.Instrument)
+		if err != nil {
+			m.logger.Warn("Failed to get current price for %s, skipping dynamic SL this cycle: %v", position.Instrument, err)
+			continue
+		}
+
+		// Track if firstMove was already triggered before this cycle
+		wasFirstMoveTriggered := tracker.FirstMoveTriggered
+
+		// Update tracker with current price
+		updated, err := UpdateTracker(ctx, m.storage, tracker, currentPrice, m.dynamicSLConfig)
+		if err != nil {
+			m.logger.Error("Failed to update tracker for position %s: %v", position.Instrument, err)
+			continue
+		}
+
+		// Log firstMove trigger
+		if !wasFirstMoveTriggered && tracker.FirstMoveTriggered {
+			m.logger.Info("FirstMove triggered for %s! Entry=%.8f, Current=%.8f, Profit=%.2f%%",
+				position.Instrument, tracker.EntryPrice, currentPrice,
+				((currentPrice-tracker.EntryPrice)/tracker.EntryPrice)*100)
+			summary.DynamicSLFirstMoves++
+		}
+
+		if updated {
+			m.logger.Debug("Tracker updated for %s: highest=%.8f, lowest=%.8f, firstMove=%v",
+				position.Instrument, tracker.HighestPriceReached, tracker.LowestPriceReached, tracker.FirstMoveTriggered)
+		}
+
+		// Check if SL adjustment is needed
+		isLong := m.isLongPosition(position)
+
+		// Log calculation details at DEBUG level
+		if isLong {
+			profitPct := (currentPrice - tracker.EntryPrice) / tracker.EntryPrice
+			m.logger.Debug("Dynamic SL calc for %s (LONG): entry=%.8f, current=%.8f, highest=%.8f, current_SL=%.8f, profit=%.2f%%, firstMove=%v",
+				position.Instrument, tracker.EntryPrice, currentPrice, tracker.HighestPriceReached,
+				tracker.CurrentSlPrice, profitPct*100, tracker.FirstMoveTriggered)
+		} else {
+			profitPct := (tracker.EntryPrice - currentPrice) / tracker.EntryPrice
+			m.logger.Debug("Dynamic SL calc for %s (SHORT): entry=%.8f, current=%.8f, lowest=%.8f, current_SL=%.8f, profit=%.2f%%, firstMove=%v",
+				position.Instrument, tracker.EntryPrice, currentPrice, tracker.LowestPriceReached,
+				tracker.CurrentSlPrice, profitPct*100, tracker.FirstMoveTriggered)
+		}
+
+		shouldAdjust, newSlPrice, err := ShouldAdjustSL(tracker, currentPrice, m.dynamicSLConfig)
+		if err != nil {
+			m.logger.Error("Failed to check SL adjustment for position %s: %v", position.Instrument, err)
+			continue
+		}
+
+		if !shouldAdjust {
+			m.logger.Debug("No SL adjustment needed for %s at current price %.8f", position.Instrument, currentPrice)
+			continue
+		}
+
+		// SL adjustment needed
+		m.logger.Info("Dynamic SL adjustment needed for %s: current_SL=%.8f → new_SL=%.8f (current_price=%.8f)",
+			position.Instrument, tracker.CurrentSlPrice, newSlPrice, currentPrice)
+
+		// Amend the SL order
+		err = m.amendStopLoss(ctx, position, &slOrder, newSlPrice, tracker)
+		if err != nil {
+			m.logger.Error("Failed to amend SL for position %s: %v", position.Instrument, err)
+			summary.DynamicSLFailures++
+			m.consecutiveAmendmentFailures++
+			continue
+		}
+
+		// Success
+		summary.DynamicSLAdjustments++
+		m.consecutiveAmendmentFailures = 0 // Reset circuit breaker on success
+		m.logger.Info("Successfully adjusted SL for %s: %.8f → %.8f", position.Instrument, tracker.CurrentSlPrice, newSlPrice)
+	}
+}
+
+// findStopLossOrders 查找持仓的止损订单 / Find stop-loss orders for position
+// 返回匹配持仓的所有止损订单
+// Return all stop-loss orders matching the position
+//
+// Parameters:
+//   - position: Position information
+//   - algoOrders: List of algo orders
+//
+// Returns:
+//   - []okx.AlgoOrder: 匹配的止损订单列表 / List of matching SL orders
+func (m *Manager) findStopLossOrders(position *models.Position, algoOrders []okx.AlgoOrder) []okx.AlgoOrder {
+	var slOrders []okx.AlgoOrder
+
+	for _, order := range algoOrders {
+		if m.matchesPosition(&order, position) && order.SlTriggerPx != "" && order.SlTriggerPx != "0" {
+			slOrders = append(slOrders, order)
+		}
+	}
+
+	return slOrders
+}
+
+// amendStopLoss 修改止损订单 / Amend stop-loss order
+// 调用OKX API修改算法订单的止损触发价格，并更新tracker状态到数据库
+// Call OKX API to amend algo order's SL trigger price and update tracker state in database
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - position: Position information
+//   - slOrder: Current SL algo order
+//   - newSlPrice: New stop-loss trigger price
+//   - tracker: Dynamic SL tracker to update after successful amendment
+//
+// Returns:
+//   - error: 修改失败时返回错误 / Error on amendment failure
+func (m *Manager) amendStopLoss(ctx context.Context, position *models.Position, slOrder *okx.AlgoOrder, newSlPrice float64, tracker *models.DynamicSLTracker) error {
+	// Prepare amendment request
+	req := &okx.AmendAlgoOrderRequest{
+		AlgoId:         slOrder.AlgoId,
+		InstId:         position.Instrument,
+		NewSlTriggerPx: formatFloat(newSlPrice),
+		NewSlOrdPx:     "-1", // Keep as market order
+	}
+
+	m.logger.Debug("Amending SL order %s for %s: %.8f → %.8f", slOrder.AlgoId, position.Instrument, tracker.CurrentSlPrice, newSlPrice)
+
+	// Call OKX API
+	resp, err := m.okxClient.AmendAlgoOrder(ctx, req)
+	if err != nil {
+		return fmt.Errorf("OKX API error: %w", err)
+	}
+
+	// Log API response at DEBUG level
+	m.logger.Debug("OKX AmendAlgoOrder response: code=%s, msg=%s, data_len=%d", resp.Code, resp.Msg, len(resp.Data))
+
+	// Check response
+	if len(resp.Data) == 0 {
+		return fmt.Errorf("empty response data from OKX")
+	}
+
+	if resp.Data[0].SCode != "0" && resp.Data[0].SCode != "" {
+		m.logger.Error("OKX rejected amendment for %s: algoId=%s, code=%s, msg=%s",
+			position.Instrument, slOrder.AlgoId, resp.Data[0].SCode, resp.Data[0].SMsg)
+		return fmt.Errorf("amendment rejected: code=%s, msg=%s", resp.Data[0].SCode, resp.Data[0].SMsg)
+	}
+
+	m.logger.Info("SL order %s amended successfully for %s", slOrder.AlgoId, position.Instrument)
+	m.logger.Debug("Amendment details: algoId=%s, old_SL=%.8f, new_SL=%.8f",
+		resp.Data[0].AlgoId, tracker.CurrentSlPrice, newSlPrice)
+
+	// Update tracker's current SL price and persist to database
+	tracker.CurrentSlPrice = newSlPrice
+	if err := m.storage.UpdateDynamicSLTracker(ctx, tracker); err != nil {
+		m.logger.Error("Successfully amended OKX order but failed to update tracker in database: %v", err)
+		// Don't return error here - the OKX amendment succeeded
+	}
+
+	return nil
+}
+
+// cleanupOrphanedTrackers 清理孤立的追踪器 / Cleanup orphaned trackers
+// 删除数据库中不再对应任何持仓的追踪器
+// Delete trackers from database that no longer correspond to any open position
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - positions: List of current open positions
+//
+// Returns:
+//   - error: 清理失败时返回错误 / Error on cleanup failure
+func (m *Manager) cleanupOrphanedTrackers(ctx context.Context, positions []*models.Position) error {
+	// Build set of open position keys
+	openPositionKeys := make([]string, len(positions))
+	for i, pos := range positions {
+		openPositionKeys[i] = fmt.Sprintf("%s_%s", pos.Instrument, pos.PositionSide)
+	}
+
+	// Call storage to cleanup orphaned trackers
+	deletedCount, err := m.storage.CleanupOrphanedTrackers(ctx, openPositionKeys)
+	if err != nil {
+		return fmt.Errorf("failed to cleanup orphaned trackers: %w", err)
+	}
+
+	if deletedCount > 0 {
+		m.logger.Info("Cleaned up %d orphaned dynamic SL trackers", deletedCount)
 	}
 
 	return nil

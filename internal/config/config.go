@@ -15,6 +15,7 @@ type Config struct {
 	Database     DatabaseConfig     `yaml:"database"`
 	Logging      LoggingConfig      `yaml:"logging"`
 	TPSL         TPSLConfig         `yaml:"tpsl"`
+	DynamicSL    DynamicSLConfig    `yaml:"dynamic_sl"`
 	OrderControl OrderControlConfig `yaml:"order_control"`
 }
 
@@ -60,6 +61,33 @@ type TPSLConfig struct {
 	CheckInterval   int     `yaml:"check_interval"`
 	VolatilityPct   float64 `yaml:"volatility_pct"`
 	ProfitLossRatio float64 `yaml:"profit_loss_ratio"`
+}
+
+// DynamicSLConfig 动态追踪止损配置 / Dynamic trailing stop-loss configuration (Feature 5)
+type DynamicSLConfig struct {
+	// Enabled 是否启用动态追踪止损 / Whether to enable dynamic trailing stop-loss
+	Enabled bool `yaml:"enabled"`
+
+	// FirstMovePct 首次移动止损阈值百分比 / First move threshold percentage
+	// 当盈利达到此百分比时，将止损移动到入场价（保本）
+	// When profit reaches this percentage, move stop-loss to entry price (breakeven)
+	// 例如 0.01 表示 1% 盈利时触发
+	// E.g., 0.01 means trigger at 1% profit
+	FirstMovePct float64 `yaml:"first_move_pct"`
+
+	// TrailingStepPct 追踪步长百分比 / Trailing step percentage
+	// 价格每上涨此百分比，就计算是否需要调整止损
+	// Calculate SL adjustment when price increases by this percentage
+	// 例如 0.005 表示价格每上涨 0.5% 检查一次
+	// E.g., 0.005 means check every 0.5% price increase
+	TrailingStepPct float64 `yaml:"trailing_step_pct"`
+
+	// StopMoveStepPct 止损移动步长百分比 / Stop-loss move step percentage
+	// 每次调整止损时，止损价格移动的百分比
+	// Percentage to move stop-loss price on each adjustment
+	// 例如 0.001 表示每次移动 0.1%
+	// E.g., 0.001 means move 0.1% each time
+	StopMoveStepPct float64 `yaml:"stop_move_step_pct"`
 }
 
 // OrderControlConfig Order Control配置 / Order Control configuration (Feature 3)
@@ -283,6 +311,44 @@ func (c *Config) Validate() error {
 	}
 	if c.TPSL.CheckInterval <= 0 {
 		return fmt.Errorf("tpsl.check_interval must be positive, got %d", c.TPSL.CheckInterval)
+	}
+
+	// Validate Dynamic SL configuration (only if enabled)
+	if c.DynamicSL.Enabled {
+		// Set defaults if not specified
+		if c.DynamicSL.FirstMovePct == 0 {
+			c.DynamicSL.FirstMovePct = 0.01 // Default 1%
+		}
+		if c.DynamicSL.TrailingStepPct == 0 {
+			c.DynamicSL.TrailingStepPct = 0.005 // Default 0.5%
+		}
+		if c.DynamicSL.StopMoveStepPct == 0 {
+			c.DynamicSL.StopMoveStepPct = 0.001 // Default 0.1%
+		}
+
+		// Validate Dynamic SL parameters
+		if c.DynamicSL.FirstMovePct <= 0 || c.DynamicSL.FirstMovePct > 1.0 {
+			return fmt.Errorf("dynamic_sl.first_move_pct must be between 0 and 1, got %f", c.DynamicSL.FirstMovePct)
+		}
+		if c.DynamicSL.TrailingStepPct <= 0 || c.DynamicSL.TrailingStepPct > 1.0 {
+			return fmt.Errorf("dynamic_sl.trailing_step_pct must be between 0 and 1, got %f", c.DynamicSL.TrailingStepPct)
+		}
+		if c.DynamicSL.StopMoveStepPct <= 0 || c.DynamicSL.StopMoveStepPct > 1.0 {
+			return fmt.Errorf("dynamic_sl.stop_move_step_pct must be between 0 and 1, got %f", c.DynamicSL.StopMoveStepPct)
+		}
+
+		// Validate logical relationships
+		// StopMoveStepPct should be smaller than TrailingStepPct for meaningful trailing
+		if c.DynamicSL.StopMoveStepPct > c.DynamicSL.TrailingStepPct {
+			return fmt.Errorf("dynamic_sl.stop_move_step_pct (%f) should not be greater than trailing_step_pct (%f)",
+				c.DynamicSL.StopMoveStepPct, c.DynamicSL.TrailingStepPct)
+		}
+
+		// FirstMovePct should be reasonable (typically larger than trailing step)
+		if c.DynamicSL.FirstMovePct < c.DynamicSL.TrailingStepPct {
+			return fmt.Errorf("dynamic_sl.first_move_pct (%f) should not be less than trailing_step_pct (%f)",
+				c.DynamicSL.FirstMovePct, c.DynamicSL.TrailingStepPct)
+		}
 	}
 
 	// Validate Order Control configuration (only if enabled)

@@ -98,6 +98,7 @@ func (s *Storage) initSchema() error {
 		&models.Position{},
 		&models.OrderHistory{},
 		&models.PositionHistory{},
+		&models.DynamicSLTracker{}, // Dynamic SL tracking table (Feature 5 Phase 1)
 		// NOTE: pending_confirmations表不在此迁移中创建
 		// 将在Feature 3 Phase 1B实现时添加
 	)
@@ -520,4 +521,169 @@ func (s *Storage) HealthCheck() error {
 //   - error: 查询失败时返回错误 / Error on query failure
 func (s *Storage) RawQuery(ctx context.Context, query string, result interface{}) error {
 	return s.db.WithContext(ctx).Raw(query).Scan(result).Error
+}
+
+// === Dynamic SL Tracker Operations (Feature 5 Phase 1) ===
+
+// InsertDynamicSLTracker 插入动态止损追踪器 / Insert dynamic SL tracker
+// 用于持久化开仓位的动态止损状态
+// Used to persist dynamic stop-loss state for open positions
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - tracker: Dynamic SL tracker with PositionKey, EntryPrice, CurrentSlPrice, etc.
+//
+// Returns:
+//   - error: 验证失败或数据库写入失败时返回错误 / Error on validation failure or database write failure
+func (s *Storage) InsertDynamicSLTracker(ctx context.Context, tracker *models.DynamicSLTracker) error {
+	if err := tracker.Validate(); err != nil {
+		return fmt.Errorf("invalid dynamic SL tracker: %w", err)
+	}
+
+	// Set timestamps
+	now := time.Now().UTC()
+	tracker.CreatedAt = now
+	tracker.LastUpdatedAt = now
+
+	result := s.db.WithContext(ctx).Create(tracker)
+	return result.Error
+}
+
+// GetDynamicSLTracker 获取动态止损追踪器 / Get dynamic SL tracker
+// 通过持仓键查询追踪器
+// Query tracker by position key
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - positionKey: Unique position identifier (format: "{instId}_{posSide}")
+//
+// Returns:
+//   - *models.DynamicSLTracker: 动态止损追踪器 / Dynamic SL tracker
+//   - error: 未找到或数据库查询失败时返回错误 / Error if not found or on database query failure
+func (s *Storage) GetDynamicSLTracker(ctx context.Context, positionKey string) (*models.DynamicSLTracker, error) {
+	var tracker models.DynamicSLTracker
+
+	result := s.db.WithContext(ctx).
+		Where("position_key = ?", positionKey).
+		First(&tracker)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return &tracker, nil
+}
+
+// UpdateDynamicSLTracker 更新动态止损追踪器 / Update dynamic SL tracker
+// 更新最高/最低价格、firstMove状态、当前止损价格等
+// Update highest/lowest price, firstMove status, current SL price, etc.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - tracker: Dynamic SL tracker with updated fields (must have valid ID)
+//
+// Returns:
+//   - error: 追踪器未找到或数据库更新失败时返回错误 / Error if tracker not found or on database update failure
+func (s *Storage) UpdateDynamicSLTracker(ctx context.Context, tracker *models.DynamicSLTracker) error {
+	if err := tracker.Validate(); err != nil {
+		return fmt.Errorf("invalid dynamic SL tracker: %w", err)
+	}
+
+	// Update timestamp
+	tracker.LastUpdatedAt = time.Now().UTC()
+
+	result := s.db.WithContext(ctx).Save(tracker)
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("tracker not found for update: position_key=%s", tracker.PositionKey)
+	}
+
+	return nil
+}
+
+// DeleteDynamicSLTracker 删除动态止损追踪器 / Delete dynamic SL tracker
+// 当持仓关闭且不再需要追踪时使用
+// Used when a position is closed and tracking is no longer needed
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - positionKey: Unique position identifier
+//
+// Returns:
+//   - error: 追踪器未找到或数据库删除失败时返回错误 / Error if tracker not found or on database delete failure
+func (s *Storage) DeleteDynamicSLTracker(ctx context.Context, positionKey string) error {
+	result := s.db.WithContext(ctx).
+		Where("position_key = ?", positionKey).
+		Delete(&models.DynamicSLTracker{})
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("tracker not found for deletion: position_key=%s", positionKey)
+	}
+
+	return nil
+}
+
+// GetAllDynamicSLTrackers 获取所有动态止损追踪器 / Get all dynamic SL trackers
+// 用于服务启动时重新加载追踪状态
+// Used on service startup to reload tracking state
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//
+// Returns:
+//   - []models.DynamicSLTracker: 所有动态止损追踪器切片 / Slice of all dynamic SL trackers
+//   - error: 数据库查询失败时返回错误 / Error on database query failure
+func (s *Storage) GetAllDynamicSLTrackers(ctx context.Context) ([]models.DynamicSLTracker, error) {
+	var trackers []models.DynamicSLTracker
+
+	result := s.db.WithContext(ctx).Find(&trackers)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return trackers, nil
+}
+
+// CleanupOrphanedTrackers 清理孤立的追踪器 / Cleanup orphaned trackers
+// 删除不再存在的持仓的追踪器，防止数据库增长
+// Remove trackers for positions that no longer exist to prevent database growth
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - openPositionKeys: Slice of position keys for currently open positions
+//
+// Returns:
+//   - int: 删除的追踪器数量 / Number of trackers deleted
+//   - error: 数据库删除失败时返回错误 / Error on database delete failure
+func (s *Storage) CleanupOrphanedTrackers(ctx context.Context, openPositionKeys []string) (int, error) {
+	if len(openPositionKeys) == 0 {
+		// If no open positions, delete all trackers
+		result := s.db.WithContext(ctx).
+			Where("1 = 1").
+			Delete(&models.DynamicSLTracker{})
+
+		if result.Error != nil {
+			return 0, result.Error
+		}
+
+		return int(result.RowsAffected), nil
+	}
+
+	// Delete trackers whose position_key is NOT in the open positions list
+	result := s.db.WithContext(ctx).
+		Where("position_key NOT IN ?", openPositionKeys).
+		Delete(&models.DynamicSLTracker{})
+
+	if result.Error != nil {
+		return 0, result.Error
+	}
+
+	return int(result.RowsAffected), nil
 }

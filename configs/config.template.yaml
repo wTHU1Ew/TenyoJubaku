@@ -100,3 +100,36 @@ tpsl:
   # Note: TP and SL are placed as TWO SEPARATE ORDERS to ensure both work correctly
   # (OKX API limitation: when both parameters sent together, only SL may execute)
   profit_loss_ratio: 5.0
+
+# Dynamic Trailing Stop-Loss Configuration (Feature 5)
+dynamic_sl:
+  # Enable dynamic trailing stop-loss functionality
+  # When enabled, the system will automatically adjust stop-loss orders
+  # as the position becomes more profitable, locking in gains
+  enabled: false
+
+  # First move threshold percentage (e.g., 0.01 = 1%)
+  # When profit reaches this percentage, move SL to entry price (breakeven)
+  # This protects your position from turning into a loss after becoming profitable
+  # Example: For entry at $100, first_move_pct = 0.01 (1%):
+  #   - Long: When price reaches $101, move SL to $100
+  #   - Short: When price reaches $99, move SL to $100
+  # Default: 0.01 (1%)
+  first_move_pct: 0.01
+
+  # Trailing step percentage (e.g., 0.005 = 0.5%)
+  # The price increment that triggers SL adjustment evaluation
+  # Smaller values = more frequent SL updates but more API calls
+  # Larger values = fewer updates but larger risk of profit giveback
+  # Example: trailing_step_pct = 0.005 means check every 0.5% price move
+  # Default: 0.005 (0.5%)
+  trailing_step_pct: 0.005
+
+  # Stop-loss move step percentage (e.g., 0.001 = 0.1%)
+  # How much to move the stop-loss on each adjustment
+  # Should be smaller than trailing_step_pct to allow profit lock-in
+  # Example: For current price $110, stop_move_step_pct = 0.001:
+  #   - Move SL up by $0.11 (0.1% of $110)
+  # Default: 0.001 (0.1%)
+  # Note: stop_move_step_pct should be < trailing_step_pct
+  stop_move_step_pct: 0.001

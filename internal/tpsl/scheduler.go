@@ -9,6 +9,7 @@ import (
 	"github.com/wTHU1Ew/TenyoJubaku/internal/config"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/logger"
 	"github.com/wTHU1Ew/TenyoJubaku/internal/okx"
+	"github.com/wTHU1Ew/TenyoJubaku/internal/storage"
 	"github.com/wTHU1Ew/TenyoJubaku/pkg/models"
 )
 
@@ -32,13 +33,15 @@ type Scheduler struct {
 //
 // Parameters:
 //   - config: TPSL configuration
+//   - dynamicSLConfig: Dynamic SL configuration (can be nil if disabled)
 //   - okxClient: OKX API client
+//   - storage: Storage interface for database operations (can be nil if dynamic SL disabled)
 //   - logger: Logger instance
 //
 // Returns:
 //   - *Scheduler: TPSL调度器实例 / TPSL scheduler instance
-func NewScheduler(config *config.TPSLConfig, okxClient *okx.Client, logger *logger.Logger) *Scheduler {
-	manager := New(config, okxClient, logger)
+func NewScheduler(config *config.TPSLConfig, dynamicSLConfig *config.DynamicSLConfig, okxClient *okx.Client, storage storage.Interface, logger *logger.Logger) *Scheduler {
+	manager := New(config, dynamicSLConfig, okxClient, storage, logger)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Scheduler{

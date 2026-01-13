@@ -139,6 +139,55 @@ type AlgoOrderResponse struct {
 	} `json:"data"`
 }
 
+// AmendAlgoOrderRequest OKX修改算法订单请求 / OKX amend algo order request
+// 用于修改现有算法订单（如止盈止损价格）
+// Used to modify existing algo orders (e.g., take-profit/stop-loss prices)
+type AmendAlgoOrderRequest struct {
+	// AlgoId 算法订单ID / Algo order ID (required)
+	AlgoId string `json:"algoId"`
+
+	// InstId 合约ID / Instrument ID (required)
+	InstId string `json:"instId"`
+
+	// NewSz 新订单数量 / New order size (optional)
+	NewSz string `json:"newSz,omitempty"`
+
+	// NewTpTriggerPx 新止盈触发价 / New take-profit trigger price (optional)
+	NewTpTriggerPx string `json:"newTpTriggerPx,omitempty"`
+
+	// NewTpOrdPx 新止盈委托价 / New take-profit order price (optional)
+	// -1表示市价 / -1 for market price
+	NewTpOrdPx string `json:"newTpOrdPx,omitempty"`
+
+	// NewSlTriggerPx 新止损触发价 / New stop-loss trigger price (optional)
+	NewSlTriggerPx string `json:"newSlTriggerPx,omitempty"`
+
+	// NewSlOrdPx 新止损委托价 / New stop-loss order price (optional)
+	// -1表示市价 / -1 for market price
+	NewSlOrdPx string `json:"newSlOrdPx,omitempty"`
+
+	// NewTpTriggerPxType 新止盈触发价类型 / New TP trigger price type (optional)
+	// last: 最新价格, index: 指数价格, mark: 标记价格
+	// last: last price, index: index price, mark: mark price
+	NewTpTriggerPxType string `json:"newTpTriggerPxType,omitempty"`
+
+	// NewSlTriggerPxType 新止损触发价类型 / New SL trigger price type (optional)
+	// last: 最新价格, index: 指数价格, mark: 标记价格
+	// last: last price, index: index price, mark: mark price
+	NewSlTriggerPxType string `json:"newSlTriggerPxType,omitempty"`
+}
+
+// AmendAlgoOrderResponse OKX修改算法订单响应 / OKX amend algo order response
+type AmendAlgoOrderResponse struct {
+	Code string `json:"code"`
+	Msg  string `json:"msg"`
+	Data []struct {
+		AlgoId    string `json:"algoId"`
+		SCode     string `json:"sCode"`
+		SMsg      string `json:"sMsg"`
+	} `json:"data"`
+}
+
 // PendingAlgoOrdersResponse OKX待处理算法订单响应 / OKX pending algo orders response
 type PendingAlgoOrdersResponse struct {
 	Code string `json:"code"`
