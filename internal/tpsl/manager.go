@@ -805,8 +805,14 @@ func (m *Manager) processDynamicSL(ctx context.Context, positions []*models.Posi
 			continue
 		}
 
-		// Load or create tracker
-		tracker, err := LoadOrCreateTracker(ctx, m.storage, position, currentSlPrice)
+		// Get position leverage (V5.1)
+		leverage := position.Leverage
+		if leverage < 1 {
+			leverage = 1 // Default to 1x if not set
+		}
+
+		// Load or create tracker (V5.1 - with leverage)
+		tracker, err := LoadOrCreateTracker(ctx, m.storage, position, currentSlPrice, leverage)
 		if err != nil {
 			m.logger.Error("Failed to load/create tracker for position %s: %v", position.Instrument, err)
 			continue
@@ -821,59 +827,68 @@ func (m *Manager) processDynamicSL(ctx context.Context, positions []*models.Posi
 			continue
 		}
 
-		// Track if firstMove was already triggered before this cycle
-		wasFirstMoveTriggered := tracker.FirstMoveTriggered
+		// Track if breakeven was already reached before this cycle (V5.1)
+		wasBreakevenReached := tracker.BreakevenReached
 
-		// Update tracker with current price
-		updated, err := UpdateTracker(ctx, m.storage, tracker, currentPrice, m.dynamicSLConfig)
+		// Update tracker with current price (V5.1 - removed config param)
+		updated, err := UpdateTracker(ctx, m.storage, tracker, currentPrice)
 		if err != nil {
 			m.logger.Error("Failed to update tracker for position %s: %v", position.Instrument, err)
 			continue
 		}
 
-		// Log firstMove trigger
-		if !wasFirstMoveTriggered && tracker.FirstMoveTriggered {
-			m.logger.Info("FirstMove triggered for %s! Entry=%.8f, Current=%.8f, Profit=%.2f%%",
-				position.Instrument, tracker.EntryPrice, currentPrice,
-				((currentPrice-tracker.EntryPrice)/tracker.EntryPrice)*100)
-			summary.DynamicSLFirstMoves++
-		}
-
 		if updated {
-			m.logger.Debug("Tracker updated for %s: highest=%.8f, lowest=%.8f, firstMove=%v",
-				position.Instrument, tracker.HighestPriceReached, tracker.LowestPriceReached, tracker.FirstMoveTriggered)
+			m.logger.Debug("Tracker updated for %s: highest=%.8f, lowest=%.8f, breakeven=%v, moves=%d",
+				position.Instrument, tracker.HighestPriceReached, tracker.LowestPriceReached, tracker.BreakevenReached, tracker.MoveCount)
 		}
 
 		// Check if SL adjustment is needed
 		isLong := m.isLongPosition(position)
 
-		// Log calculation details at DEBUG level
-		if isLong {
-			profitPct := (currentPrice - tracker.EntryPrice) / tracker.EntryPrice
-			m.logger.Debug("Dynamic SL calc for %s (LONG): entry=%.8f, current=%.8f, highest=%.8f, current_SL=%.8f, profit=%.2f%%, firstMove=%v",
-				position.Instrument, tracker.EntryPrice, currentPrice, tracker.HighestPriceReached,
-				tracker.CurrentSlPrice, profitPct*100, tracker.FirstMoveTriggered)
-		} else {
-			profitPct := (tracker.EntryPrice - currentPrice) / tracker.EntryPrice
-			m.logger.Debug("Dynamic SL calc for %s (SHORT): entry=%.8f, current=%.8f, lowest=%.8f, current_SL=%.8f, profit=%.2f%%, firstMove=%v",
-				position.Instrument, tracker.EntryPrice, currentPrice, tracker.LowestPriceReached,
-				tracker.CurrentSlPrice, profitPct*100, tracker.FirstMoveTriggered)
+		// Determine current phase for logging (V5.1)
+		currentPhase := "PhaseA"
+		if tracker.BreakevenReached {
+			currentPhase = "PhaseB"
 		}
 
-		shouldAdjust, newSlPrice, err := ShouldAdjustSL(tracker, currentPrice, m.dynamicSLConfig)
+		// Log calculation details at DEBUG level (V5.1 - with leverage and account profit)
+		var priceProfitPct float64
+		if isLong {
+			priceProfitPct = (currentPrice - tracker.EntryPrice) / tracker.EntryPrice
+			accountProfitPct := priceProfitPct * tracker.Leverage
+			m.logger.Debug("Dynamic SL calc for %s (LONG): entry=%.8f, current=%.8f, highest=%.8f, current_SL=%.8f, leverage=%.1fx, price_profit=%.2f%%, account_profit=%.2f%%, breakeven=%v, phase=%s",
+				position.Instrument, tracker.EntryPrice, currentPrice, tracker.HighestPriceReached,
+				tracker.CurrentSlPrice, tracker.Leverage, priceProfitPct*100, accountProfitPct*100, tracker.BreakevenReached, currentPhase)
+		} else {
+			priceProfitPct = (tracker.EntryPrice - currentPrice) / tracker.EntryPrice
+			accountProfitPct := priceProfitPct * tracker.Leverage
+			m.logger.Debug("Dynamic SL calc for %s (SHORT): entry=%.8f, current=%.8f, lowest=%.8f, current_SL=%.8f, leverage=%.1fx, price_profit=%.2f%%, account_profit=%.2f%%, breakeven=%v, phase=%s",
+				position.Instrument, tracker.EntryPrice, currentPrice, tracker.LowestPriceReached,
+				tracker.CurrentSlPrice, tracker.Leverage, priceProfitPct*100, accountProfitPct*100, tracker.BreakevenReached, currentPhase)
+		}
+
+		// Check SL adjustment (V5.1 - returns phase)
+		shouldAdjust, newSlPrice, phase, err := ShouldAdjustSL(tracker, currentPrice, m.dynamicSLConfig)
 		if err != nil {
 			m.logger.Error("Failed to check SL adjustment for position %s: %v", position.Instrument, err)
 			continue
 		}
 
+		// Log breakeven reached (V5.1)
+		if !wasBreakevenReached && IsBreakevenReached(tracker) {
+			m.logger.Info("Breakeven reached for %s! Entry=%.8f, CurrentSL=%.8f, moves=%d",
+				position.Instrument, tracker.EntryPrice, tracker.CurrentSlPrice, tracker.MoveCount)
+			summary.DynamicSLFirstMoves++ // Reuse this counter for breakeven triggers
+		}
+
 		if !shouldAdjust {
-			m.logger.Debug("No SL adjustment needed for %s at current price %.8f", position.Instrument, currentPrice)
+			m.logger.Debug("No SL adjustment needed for %s at current price %.8f (phase=%s)", position.Instrument, currentPrice, phase)
 			continue
 		}
 
-		// SL adjustment needed
-		m.logger.Info("Dynamic SL adjustment needed for %s: current_SL=%.8f → new_SL=%.8f (current_price=%.8f)",
-			position.Instrument, tracker.CurrentSlPrice, newSlPrice, currentPrice)
+		// SL adjustment needed (V5.1 - log phase)
+		m.logger.Info("Dynamic SL adjustment needed for %s [%s]: current_SL=%.8f → new_SL=%.8f (current_price=%.8f)",
+			position.Instrument, phase, tracker.CurrentSlPrice, newSlPrice, currentPrice)
 
 		// Amend the SL order
 		err = m.amendStopLoss(ctx, position, &slOrder, newSlPrice, tracker)

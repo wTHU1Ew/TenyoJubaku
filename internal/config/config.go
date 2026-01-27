@@ -63,17 +63,30 @@ type TPSLConfig struct {
 	ProfitLossRatio float64 `yaml:"profit_loss_ratio"`
 }
 
-// DynamicSLConfig 动态追踪止损配置 / Dynamic trailing stop-loss configuration (Feature 5)
+// DynamicSLConfig 动态追踪止损配置 / Dynamic trailing stop-loss configuration (Feature 5 - V5.1)
+// V5.1 两阶段算法：Phase A (杠杆感知渐进保本) + Phase B (追踪止损)
+// V5.1 Two-phase algorithm: Phase A (leverage-aware gradual breakeven) + Phase B (trailing)
 type DynamicSLConfig struct {
 	// Enabled 是否启用动态追踪止损 / Whether to enable dynamic trailing stop-loss
 	Enabled bool `yaml:"enabled"`
 
-	// FirstMovePct 首次移动止损阈值百分比 / First move threshold percentage
-	// 当盈利达到此百分比时，将止损移动到入场价（保本）
-	// When profit reaches this percentage, move stop-loss to entry price (breakeven)
-	// 例如 0.01 表示 1% 盈利时触发
-	// E.g., 0.01 means trigger at 1% profit
-	FirstMovePct float64 `yaml:"first_move_pct"`
+	// ===== Phase A: 渐进保本 (Gradual Move to Breakeven) =====
+
+	// ProfitStepPct 账户盈利阈值基准百分比 / Account profit threshold base percentage (V5.1)
+	// 当账户盈利达到 ProfitStepPct × 杠杆倍率 时触发止损移动
+	// Trigger SL move when account profit reaches ProfitStepPct × leverage
+	// 例如 0.01 表示 1% 基准，10倍杠杆时为 10% 账户盈利
+	// E.g., 0.01 means 1% base, with 10x leverage it's 10% account profit
+	ProfitStepPct float64 `yaml:"profit_step_pct"`
+
+	// SlMoveStepPct 止损移动步长基准百分比 / SL move step base percentage (V5.1)
+	// 每次触发时，止损价格移动 SlMoveStepPct × 杠杆倍率
+	// On each trigger, SL price moves by SlMoveStepPct × leverage
+	// 例如 0.0101 表示 1.01% 基准，10倍杠杆时止损移动 10.1%
+	// E.g., 0.0101 means 1.01% base, with 10x leverage SL moves 10.1%
+	SlMoveStepPct float64 `yaml:"sl_move_step_pct"`
+
+	// ===== Phase B: 追踪止损 (Trailing Mode - Only After Breakeven) =====
 
 	// TrailingStepPct 追踪步长百分比 / Trailing step percentage
 	// 价格每上涨此百分比，就计算是否需要调整止损
@@ -313,12 +326,17 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("tpsl.check_interval must be positive, got %d", c.TPSL.CheckInterval)
 	}
 
-	// Validate Dynamic SL configuration (only if enabled)
+	// Validate Dynamic SL configuration V5.1 (only if enabled)
 	if c.DynamicSL.Enabled {
-		// Set defaults if not specified
-		if c.DynamicSL.FirstMovePct == 0 {
-			c.DynamicSL.FirstMovePct = 0.01 // Default 1%
+		// Set defaults if not specified - Phase A parameters
+		if c.DynamicSL.ProfitStepPct == 0 {
+			c.DynamicSL.ProfitStepPct = 0.01 // Default 1% base (×leverage)
 		}
+		if c.DynamicSL.SlMoveStepPct == 0 {
+			c.DynamicSL.SlMoveStepPct = 0.0101 // Default 1.01% base (×leverage)
+		}
+
+		// Set defaults if not specified - Phase B parameters
 		if c.DynamicSL.TrailingStepPct == 0 {
 			c.DynamicSL.TrailingStepPct = 0.005 // Default 0.5%
 		}
@@ -326,10 +344,15 @@ func (c *Config) Validate() error {
 			c.DynamicSL.StopMoveStepPct = 0.001 // Default 0.1%
 		}
 
-		// Validate Dynamic SL parameters
-		if c.DynamicSL.FirstMovePct <= 0 || c.DynamicSL.FirstMovePct > 1.0 {
-			return fmt.Errorf("dynamic_sl.first_move_pct must be between 0 and 1, got %f", c.DynamicSL.FirstMovePct)
+		// Validate Phase A parameters
+		if c.DynamicSL.ProfitStepPct <= 0 || c.DynamicSL.ProfitStepPct > 1.0 {
+			return fmt.Errorf("dynamic_sl.profit_step_pct must be between 0 and 1, got %f", c.DynamicSL.ProfitStepPct)
 		}
+		if c.DynamicSL.SlMoveStepPct <= 0 || c.DynamicSL.SlMoveStepPct > 1.0 {
+			return fmt.Errorf("dynamic_sl.sl_move_step_pct must be between 0 and 1, got %f", c.DynamicSL.SlMoveStepPct)
+		}
+
+		// Validate Phase B parameters
 		if c.DynamicSL.TrailingStepPct <= 0 || c.DynamicSL.TrailingStepPct > 1.0 {
 			return fmt.Errorf("dynamic_sl.trailing_step_pct must be between 0 and 1, got %f", c.DynamicSL.TrailingStepPct)
 		}
@@ -337,17 +360,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("dynamic_sl.stop_move_step_pct must be between 0 and 1, got %f", c.DynamicSL.StopMoveStepPct)
 		}
 
-		// Validate logical relationships
+		// Validate logical relationships for Phase B
 		// StopMoveStepPct should be smaller than TrailingStepPct for meaningful trailing
 		if c.DynamicSL.StopMoveStepPct > c.DynamicSL.TrailingStepPct {
 			return fmt.Errorf("dynamic_sl.stop_move_step_pct (%f) should not be greater than trailing_step_pct (%f)",
 				c.DynamicSL.StopMoveStepPct, c.DynamicSL.TrailingStepPct)
 		}
 
-		// FirstMovePct should be reasonable (typically larger than trailing step)
-		if c.DynamicSL.FirstMovePct < c.DynamicSL.TrailingStepPct {
-			return fmt.Errorf("dynamic_sl.first_move_pct (%f) should not be less than trailing_step_pct (%f)",
-				c.DynamicSL.FirstMovePct, c.DynamicSL.TrailingStepPct)
+		// Validate Phase A logical relationships
+		// SlMoveStepPct should be slightly larger than ProfitStepPct to ensure progress toward breakeven
+		if c.DynamicSL.SlMoveStepPct < c.DynamicSL.ProfitStepPct {
+			return fmt.Errorf("dynamic_sl.sl_move_step_pct (%f) should be >= profit_step_pct (%f) to ensure progress toward breakeven",
+				c.DynamicSL.SlMoveStepPct, c.DynamicSL.ProfitStepPct)
 		}
 	}
 

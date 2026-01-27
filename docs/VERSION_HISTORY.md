@@ -8,6 +8,91 @@
 
 ## Version History
 
+### V5.1 (2026-01-27)
+
+**Type:** Algorithm Enhancement - Leverage-Aware Dynamic Stop-Loss
+
+**Changes:**
+1. **Two-Phase Dynamic Stop-Loss Algorithm (V5.1)**
+   - Replaces V5.0's simple three-step algorithm with leverage-aware two-phase approach
+   - **Phase A: Gradual Move to Breakeven**
+     - Threshold: Account profit >= `profit_step_pct × leverage`
+     - Action: Move SL by `sl_move_step_pct × leverage` toward breakeven
+     - Continues until SL reaches entry price ± 0.1% (breakeven)
+   - **Phase B: Trailing Mode (Only After Breakeven)**
+     - Same as V5.0: Every 0.5% price gain → SL moves 0.1%
+     - Only activates after breakeven is reached
+
+2. **Database Schema Updates**
+   - Added `initial_sl_price` - Track original SL for distance calculation
+   - Added `leverage` - Store position leverage for threshold calculation
+   - Renamed `first_move_triggered` → `breakeven_reached` (semantic change)
+   - Added `move_count` - Track number of SL adjustments made
+   ```sql
+   ALTER TABLE dynamic_sl_tracking ADD COLUMN initial_sl_price REAL NOT NULL DEFAULT 0;
+   ALTER TABLE dynamic_sl_tracking ADD COLUMN leverage REAL NOT NULL DEFAULT 1;
+   ALTER TABLE dynamic_sl_tracking ADD COLUMN move_count INTEGER NOT NULL DEFAULT 0;
+   -- first_move_triggered renamed to breakeven_reached (GORM will auto-migrate)
+   ```
+
+3. **Configuration Changes**
+   - Renamed `first_move_pct` → `profit_step_pct` (base for leverage-aware threshold)
+   - Added `sl_move_step_pct` (base for leverage-aware SL movement)
+   ```yaml
+   dynamic_sl:
+     enabled: true
+     profit_step_pct: 0.01    # 1% base × leverage = account profit threshold
+     sl_move_step_pct: 0.0101 # 1.01% base × leverage = SL move amount
+     trailing_step_pct: 0.005 # 0.5% (unchanged)
+     stop_move_step_pct: 0.001 # 0.1% (unchanged)
+   ```
+
+4. **Algorithm Examples**
+   - **10x Leverage (typical):**
+     - Entry: $100, Initial SL: $98
+     - Phase A threshold: 1% × 10 = 10% account profit (price at $101)
+     - Phase A move: 1.01% × 10 = 10.1% (SL jumps to breakeven in one move)
+   - **2x Leverage (lower):**
+     - Phase A threshold: 1% × 2 = 2% account profit
+     - Phase A move: 1.01% × 2 = 2.02% (may require multiple moves)
+     - More gradual protection, matches lower risk profile
+
+5. **Enhanced Logging (V5.1)**
+   - Logs current phase (PhaseA: "Moving to Breakeven" or PhaseB: "Trailing")
+   - Logs leverage value in calculation details
+   - Logs account profit (not just price profit)
+   - Logs distance to breakeven during Phase A
+   - Logs when breakeven is reached (INFO level)
+   - Logs move count in adjustment messages
+
+6. **Helper Functions Added**
+   - `IsBreakevenReached()` - Check if tracker has reached breakeven state
+   - `GetDistanceToBreakeven()` - Calculate remaining distance to breakeven
+
+**Technical Details:**
+- Backward compatible: V5.0 behavior approximated with 1x leverage
+- GORM auto-migration handles schema changes
+- All existing trackers migrated with `leverage=1`, `breakeven_reached=first_move_triggered`
+
+**Benefits:**
+- ✅ Leverage-appropriate profit protection (higher leverage = faster breakeven)
+- ✅ Lower leverage positions get gradual protection (multiple moves)
+- ✅ Clear two-phase logic (easier to understand and debug)
+- ✅ Move count tracking for analysis and optimization
+- ✅ Enhanced logging for production monitoring
+
+**Files Modified:**
+- `pkg/models/dynamic_sl_tracker.go` - Added V5.1 fields
+- `pkg/models/dynamic_sl_tracker_test.go` - Updated tests for new fields
+- `internal/config/config.go` - Added V5.1 config parameters
+- `internal/tpsl/dynamic_sl.go` - Rewritten two-phase algorithm
+- `internal/tpsl/dynamic_sl_test.go` - Comprehensive V5.1 tests
+- `internal/tpsl/manager.go` - Updated integration with leverage support
+- `configs/config.template.yaml` - Updated with V5.1 documentation
+- `docs/VERSION_HISTORY.md` - Added V5.1 entry
+
+---
+
 ### V5.0 (2026-01-13)
 
 **Type:** Major Feature - Dynamic Trailing Stop-Loss

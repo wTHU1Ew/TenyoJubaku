@@ -9,22 +9,29 @@ The current TPSL system (auto-tpsl-management) provides **static** stop-loss pro
 
 **Limitation**: Once set, the stop-loss never moves, even as position becomes profitable. A 5% profitable position can still lose the original 1% if price reverses.
 
-**User Strategy** (from project.md Feature 5):
-- After position gains 1% (firstMove), move SL to breakeven (entry * 1.001 to cover fees)
-- As price continues favorably, trail SL upward: every 0.5% price gain → SL moves up 0.1%
-- This locks in profits while allowing position to run
+**User Strategy** (from project.md Feature 5 - Updated V5.1):
+- **Leverage-Aware Gradual Move to Breakeven**:
+  - When account profit reaches **1% × leverage**, move SL by **1.01% × leverage** (direction based on long/short)
+  - Continue this step-by-step process until SL fully covers the entry price (breakeven)
+  - Example: 10x leverage with initial SL at -2% (20% account loss potential)
+    - First trigger: 10% account profit → SL moves up 10.1%
+    - Second trigger: another 10% account profit → SL moves up another 10.1%, now at/above breakeven
+- **Trailing Mode (only after breakeven is reached)**:
+  - As price continues favorably, trail SL upward: every 0.5% price gain → SL moves up 0.1%
+- This locks in profits while allowing position to run, with leverage-proportional protection
 
 **Constraint**: Must work alongside existing static TPSL and be configuration-driven.
 
 ## Goals / Non-Goals
 
 ### Goals
-1. **Protect Profits**: Automatically move stop-loss to breakeven after initial profit threshold
-2. **Lock in Gains**: Trail stop-loss as price moves favorably to secure profits
-3. **Configuration-Driven**: All parameters (firstMove, trailingStep, stopMoveStep) configurable
-4. **Co-exist with Static TPSL**: Dynamic SL adjusts existing algo orders, static TP unchanged
-5. **Minimal Overhead**: Leverage existing TPSL check cycle, no new goroutines needed
-6. **Backward Compatible**: Feature is opt-in; when disabled, system behaves identically to V4.5
+1. **Protect Profits**: Automatically move stop-loss towards breakeven using leverage-aware gradual steps
+2. **Leverage-Proportional**: Use position leverage to scale profit thresholds and SL movement steps
+3. **Lock in Gains**: Trail stop-loss as price moves favorably to secure profits (only after breakeven)
+4. **Configuration-Driven**: All parameters (profitStepPct, slMoveStepPct, trailingStep, stopMoveStep) configurable
+5. **Co-exist with Static TPSL**: Dynamic SL adjusts existing algo orders, static TP unchanged
+6. **Minimal Overhead**: Leverage existing TPSL check cycle, no new goroutines needed
+7. **Backward Compatible**: Feature is opt-in; when disabled, system behaves identically to V4.5
 
 ### Non-Goals
 1. **Historical Analysis**: Not building SL adjustment history table (only current state matters)
@@ -87,24 +94,43 @@ The current TPSL system (auto-tpsl-management) provides **static** stop-loss pro
 - Consistent with project's layered design
 - 5-minute granularity acceptable for swing trading strategy (user's typical style)
 
-### Decision 4: Long/Short Position Handling
+### Decision 4: Long/Short Position Handling (V5.1 - Leverage-Aware)
 
-**Choice**: Use existing `isLongPosition()` method; reverse all logic for short positions
+**Choice**: Use existing `isLongPosition()` method; reverse all logic for short positions; scale thresholds by leverage
 
-**Implementation**:
-- **Long**: SL moves up as price increases
-  - firstMove: `if (markPrice - entryPrice) / entryPrice >= 1%`
-  - New SL: `entryPrice * 1.001` (breakeven)
-  - Trailing: `if (markPrice - highestPrice) / highestPrice >= 0.5%`, SL up 0.1%
+**Implementation** (Two-Phase Algorithm):
 
-- **Short**: SL moves down as price decreases
-  - firstMove: `if (entryPrice - markPrice) / entryPrice >= 1%`
-  - New SL: `entryPrice * 0.999` (breakeven)
-  - Trailing: `if (lowestPrice - markPrice) / lowestPrice >= 0.5%`, SL down 0.1%
+**Phase A: Gradual Move to Breakeven (Leverage-Aware)**
 
-**Rationale**: Consistent with existing TPSL calculation pattern (manager.go:288-299)
+- **Long**: SL moves up as account profits
+  - Threshold: `accountProfit >= 1% × leverage` (e.g., 10x leverage → 10% account profit)
+  - Action: `newSL = currentSL × (1 + 1.01% × leverage)` (e.g., 10x → SL moves up 10.1%)
+  - Repeat: Continue until `currentSL >= entryPrice × 1.001` (breakeven + fees)
+  - Example with 10x leverage, initial SL at entry - 2%:
+    - Account profit 10% → SL moves from -2% to +8.1%
+    - Already above breakeven, enter trailing mode
 
-### Decision 5: Configuration Structure
+- **Short**: SL moves down as account profits
+  - Threshold: `accountProfit >= 1% × leverage`
+  - Action: `newSL = currentSL × (1 - 1.01% × leverage)`
+  - Repeat: Continue until `currentSL <= entryPrice × 0.999` (breakeven - fees)
+
+**Phase B: Trailing Mode (Only After Breakeven)**
+
+- **Long**: Trail SL as price continues favorably
+  - Trigger: `if (markPrice - highestPrice) / highestPrice >= 0.5%`
+  - Action: SL moves up by 0.1%
+
+- **Short**: Trail SL as price continues favorably
+  - Trigger: `if (lowestPrice - markPrice) / lowestPrice >= 0.5%`
+  - Action: SL moves down by 0.1%
+
+**Rationale**:
+- Leverage-proportional thresholds ensure consistent risk management across different leverage levels
+- Gradual approach prevents premature breakeven trigger in volatile markets
+- Clear two-phase separation (breakeven vs trailing) simplifies state machine
+
+### Decision 5: Configuration Structure (V5.1 - Updated)
 
 **Choice**: Nest `dynamic_sl` under existing `tpsl` config section
 
@@ -115,18 +141,26 @@ tpsl:
   volatility_pct: 0.01
   profit_loss_ratio: 5.0
 
-  # NEW: Dynamic trailing stop-loss
+  # NEW: Dynamic trailing stop-loss (V5.1 - Leverage-Aware)
   dynamic_sl:
     enabled: true
-    first_move_pct: 0.01       # Move to breakeven after 1% profit
-    trailing_step_pct: 0.005   # Trail every 0.5% gain
-    stop_move_step_pct: 0.001  # Move SL up 0.1% each step
+
+    # Phase A: Gradual Move to Breakeven (Leverage-Aware)
+    # Threshold: account_profit >= profit_step_pct × leverage
+    profit_step_pct: 0.01      # 1% base (e.g., 10x leverage → 10% account profit triggers move)
+    # Action: SL moves by sl_move_step_pct × leverage
+    sl_move_step_pct: 0.0101   # 1.01% base (e.g., 10x leverage → SL moves 10.1%)
+
+    # Phase B: Trailing Mode (Only After Breakeven)
+    trailing_step_pct: 0.005   # Trail every 0.5% price gain
+    stop_move_step_pct: 0.001  # Move SL up 0.1% each trail step
 ```
 
 **Rationale**:
 - Logical grouping (dynamic SL is extension of TPSL functionality)
 - Clear hierarchy in config file
 - Independent enable/disable from static TPSL
+- Leverage scaling built into algorithm, config provides base percentages
 
 ## Architecture
 
@@ -146,20 +180,23 @@ tpsl:
 │  └────────────────────────────────────────────────────────┘ │
 │                                                             │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  DynamicSLTracker (NEW - Database Model)              │ │
+│  │  DynamicSLTracker (NEW - Database Model - V5.1)       │ │
 │  │  - ID: int64 (primary key)                            │ │
 │  │  - PositionKey: string (unique index)                 │ │
 │  │  - InstId: string                                      │ │
 │  │  - PosSide: string                                     │ │
 │  │  - EntryPrice: float64                                 │ │
 │  │  - CurrentSlPrice: float64                             │ │
+│  │  - InitialSlPrice: float64 (original SL for calc)     │ │
+│  │  - Leverage: float64 (position leverage)              │ │
 │  │  - HighestPriceReached: float64 (for long)             │ │
 │  │  - LowestPriceReached: float64 (for short)             │ │
-│  │  - FirstMoveTriggered: bool                            │ │
+│  │  - BreakevenReached: bool (Phase B starts here)        │ │
+│  │  - MoveCount: int (how many times SL moved)            │ │
 │  │  - LastUpdatedAt: time.Time                            │ │
 │  │  - CreatedAt: time.Time                                │ │
-│  │  + UpdateTracker(markPrice) [updates DB]              │ │
-│  │  + ShouldAdjustSL() (bool, newSlPrice)                 │ │
+│  │  + UpdateTracker(markPrice, leverage) [updates DB]    │ │
+│  │  + ShouldAdjustSL() (bool, newSlPrice, phase)         │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                             │
 │  Loaded from DB: SELECT * FROM dynamic_sl_tracking         │
@@ -218,7 +255,7 @@ tpsl:
 4. Log Dynamic SL Summary (positions tracked, adjustments made, failures)
 ```
 
-### State Transitions
+### State Transitions (V5.1 - Two-Phase Algorithm)
 
 ```
 Position State Machine for Dynamic SL:
@@ -226,22 +263,26 @@ Position State Machine for Dynamic SL:
 [Position Opened]
       │
       ▼
-[Static TPSL Placed] ──► firstMove NOT triggered
+[Static TPSL Placed] ──► Phase A: Gradual Move to Breakeven
       │                    │
-      │                    ├─► Monitor markPrice
+      │                    ├─► Monitor account profit
       │                    │   every cycle
       │                    │
-      │                    ├─► (markPrice - entry) / entry >= 1%?
+      │                    ├─► accountProfit >= 1% × leverage?
       │                    │
       │                    ▼ YES
-      │              [FirstMove Triggered]
+      │              [Move SL by 1.01% × leverage]
       │                    │
-      │                    ├─► Amend SL to entry * 1.001
+      │                    ├─► currentSL >= entry × 1.001? (Long)
+      │                    │   currentSL <= entry × 0.999? (Short)
       │                    │
-      │                    ▼
-      │              [Trailing Mode]
+      │                    ▼ NO (not yet at breakeven)
+      │                    └─► Loop: wait for next profit threshold
       │                    │
-      │                    ├─► Update highest price if markPrice > highest
+      │                    ▼ YES (breakeven reached)
+      │              [Phase B: Trailing Mode]
+      │                    │
+      │                    ├─► Update highest/lowest price
       │                    │
       │                    ├─► (markPrice - highest) / highest >= 0.5%?
       │                    │
@@ -252,6 +293,16 @@ Position State Machine for Dynamic SL:
       │
       ▼
 [Position Closed] ──► DELETE tracker from database
+
+Example: 10x leverage, entry $100, initial SL $98 (2% loss = 20% account loss)
+─────────────────────────────────────────────────────────────────────────────
+1. Price rises to $101 (1% gain = 10% account profit)
+   → SL moves from $98 to $98 × 1.101 = $107.898
+   → Already above breakeven ($100.10), enter Phase B
+2. Price continues to $102 (2% gain from $101 high)
+   → Wait for 0.5% from high = need $101.505
+3. Price hits $101.51 (0.5% above $101 high)
+   → SL moves up 0.1%: $107.898 × 1.001 = $108.006
 ```
 
 ## Risks / Trade-offs

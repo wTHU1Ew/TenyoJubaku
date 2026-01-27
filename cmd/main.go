@@ -138,8 +138,8 @@ func main() {
 		// Pass dynamic SL config and storage for dynamic trailing stop-loss functionality
 		tpslScheduler = tpsl.NewScheduler(&cfg.TPSL, &cfg.DynamicSL, okxClient, db, log)
 		if cfg.DynamicSL.Enabled {
-			log.Info("Dynamic trailing stop-loss enabled: firstMove=%.2f%%, trailingStep=%.2f%%, stopMoveStep=%.2f%%",
-				cfg.DynamicSL.FirstMovePct*100, cfg.DynamicSL.TrailingStepPct*100, cfg.DynamicSL.StopMoveStepPct*100)
+			log.Info("Dynamic trailing stop-loss V5.1 enabled: profitStep=%.2f%% (×lev), slMoveStep=%.2f%% (×lev), trailingStep=%.2f%%, stopMoveStep=%.2f%%",
+				cfg.DynamicSL.ProfitStepPct*100, cfg.DynamicSL.SlMoveStepPct*100, cfg.DynamicSL.TrailingStepPct*100, cfg.DynamicSL.StopMoveStepPct*100)
 		}
 	} else {
 		log.Info("TPSL management disabled in configuration")

@@ -6,26 +6,32 @@ The current TPSL system uses **static** stop-loss levels calculated at position 
 
 **Problem**: A position that gains 5% profit still has the same stop-loss level as when it was opened, meaning a reversal could eliminate all gains and still trigger the original loss.
 
-**Solution**: Implement dynamic trailing stop-loss that:
-1. Protects capital by moving stop-loss to breakeven after initial profit (1% by default)
-2. Locks in profits as price continues to move favorably
-3. Allows profitable positions to run while limiting downside
+**Solution**: Implement dynamic trailing stop-loss with **leverage-aware gradual breakeven approach** (V5.1):
+1. **Phase A - Gradual Move to Breakeven**: When account profit reaches **1% × leverage**, move SL by **1.01% × leverage**
+   - Continue step-by-step until SL fully covers entry price (breakeven)
+   - Example: 10x leverage with initial SL at -2% → need moves until SL >= entry
+2. **Phase B - Trailing Mode**: Only after reaching breakeven, trail SL upward
+   - Every 0.5% price gain → SL moves up 0.1%
+3. Allows profitable positions to run while providing leverage-proportional protection
 
 This is the **MVP of Feature 5** (left-side trading strategy) as specified in project.md, with planned trading to be implemented in a future phase.
 
 ## What Changes
 
-**Core Functionality:**
-- Add dynamic stop-loss adjustment logic to TPSL manager
-- Monitor position unrealized PNL in real-time
+**Core Functionality (V5.1 - Leverage-Aware):**
+- Add dynamic stop-loss adjustment logic with **two-phase algorithm**:
+  - **Phase A**: Gradual move to breakeven using leverage-scaled thresholds
+  - **Phase B**: Trailing mode (only after breakeven reached)
+- Monitor position unrealized PNL and account profit in real-time
+- Read position leverage for proportional threshold calculation
 - Automatically amend algo order stop-loss prices via OKX API when profit thresholds are met
-- Configuration-driven parameters (firstMove, trailingStep, stopMoveStep)
+- Configuration-driven parameters (profitStepPct, slMoveStepPct, trailingStep, stopMoveStep)
 
 **Specific Changes:**
-1. **TPSL Configuration Extension**
+1. **TPSL Configuration Extension (V5.1)**
    - Add `dynamic_sl` section to TPSL config
-   - Parameters: `enabled`, `first_move_pct`, `trailing_step_pct`, `stop_move_step_pct`
-   - Default: firstMove=1%, trailingStep=0.5%, stopMoveStep=0.1%
+   - Parameters: `enabled`, `profit_step_pct`, `sl_move_step_pct`, `trailing_step_pct`, `stop_move_step_pct`
+   - Default: profitStepPct=1% (×leverage), slMoveStepPct=1.01% (×leverage), trailingStep=0.5%, stopMoveStep=0.1%
 
 2. **Dynamic SL Tracking (Database Persistence)**
    - Create new table `dynamic_sl_tracking` to store tracker state
@@ -68,17 +74,20 @@ This is the **MVP of Feature 5** (left-side trading strategy) as specified in pr
 **Breaking Changes:**
 - None (feature is opt-in via configuration)
 
-**Database Changes:**
-- **NEW TABLE**: `dynamic_sl_tracking` with columns:
+**Database Changes (V5.1 - Updated Schema):**
+- **MODIFIED TABLE**: `dynamic_sl_tracking` with columns:
   - `id` (primary key, auto-increment)
   - `position_key` (unique index, format: "{instId}_{posSide}")
   - `inst_id` (instrument ID)
   - `pos_side` (position side: long/short/net)
   - `entry_price` (position entry price)
   - `current_sl_price` (current stop-loss trigger price)
+  - `initial_sl_price` (original SL price for calculating distance to breakeven) **NEW**
+  - `leverage` (position leverage for threshold calculation) **NEW**
   - `highest_price_reached` (for long positions)
   - `lowest_price_reached` (for short positions)
-  - `first_move_triggered` (boolean)
+  - `breakeven_reached` (boolean, true when Phase B starts) **NEW (replaces first_move_triggered)**
+  - `move_count` (number of SL adjustments made) **NEW**
   - `last_updated_at` (timestamp)
   - `created_at` (timestamp)
 - Uses GORM for all database operations (complies with project.md convention)
