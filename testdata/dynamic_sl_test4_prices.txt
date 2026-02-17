@@ -1,0 +1,39 @@
+# Test 4 (Short): 3% initial SL=103, price drops to 95, then rises
+# Entry: 100, Initial SL: 103 (3% above, short, volatility_pct=0.03)
+# Phase A trigger at price=99 (10% account profit with 10x leverage)
+# SL drops to breakeven=99.9 (capped)
+# Phase B: trailing 0.5% → SL moves down 0.1% each step
+# Then price rises until SL triggers
+100
+100
+100
+99
+98.5
+98
+97.5
+97
+96.5
+96
+95.5
+95
+95
+95.25
+95.5
+95.75
+96
+96.25
+96.5
+96.75
+97
+97.25
+97.5
+97.75
+98
+98.25
+98.5
+98.75
+99
+99.25
+99.5
+99.75
+100

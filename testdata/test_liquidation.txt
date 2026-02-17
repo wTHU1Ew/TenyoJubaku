@@ -1,0 +1,9 @@
+# Test scenario: Liquidation
+# Entry at 100, leverage 10x, liq price = 91
+# Price falls to trigger liquidation
+100
+98
+95
+93
+91
+89

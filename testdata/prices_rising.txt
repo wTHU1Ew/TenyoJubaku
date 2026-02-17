@@ -1,0 +1,13 @@
+# Rising price scenario for testing dynamic SL Phase A and Phase B
+# Entry at 100, price rises steadily to trigger breakeven and trailing
+100.00
+101.00
+102.00
+103.00
+104.00
+105.00
+106.00
+107.00
+108.00
+109.00
+110.00

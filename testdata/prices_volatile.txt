@@ -1,0 +1,14 @@
+# Volatile price scenario for testing trailing stop-loss
+# Price rises, then falls back, testing SL protection
+100.00
+102.00
+104.00
+106.00
+108.00
+110.00
+# Price starts falling
+108.00
+106.00
+104.00
+102.00
+100.00

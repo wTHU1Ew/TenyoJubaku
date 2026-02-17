@@ -1,0 +1,22 @@
+# Test 1 (Long): 1% auto SL, price rises to 102, then drops
+# Entry: 100, Initial SL: 99 (1% below)
+# Phase A trigger: 10% account profit (price=101)
+# After Phase A: SL moves to breakeven=100.1
+# Phase B trigger: 0.5% price gain above highest
+# Then price drops 0.25/step until SL triggers
+100
+100
+100
+101
+102
+102
+101.75
+101.5
+101.25
+101.0
+100.75
+100.5
+100.25
+100.1
+100.0
+99.75

@@ -830,6 +830,14 @@ func (m *Manager) processDynamicSL(ctx context.Context, positions []*models.Posi
 		// Track if breakeven was already reached before this cycle (V5.1)
 		wasBreakevenReached := tracker.BreakevenReached
 
+		// Save extreme price BEFORE UpdateTracker so Phase B can compare against previous cycle's high
+		// 在UpdateTracker之前保存极值价格，确保Phase B能与上个周期的最高/最低价比较
+		// Bug fix: if we update highest first then check currentPrice > highest, it's always false
+		prevExtremePrice := tracker.HighestPriceReached
+		if tracker.PosSide == string(models.PositionSideShort) {
+			prevExtremePrice = tracker.LowestPriceReached
+		}
+
 		// Update tracker with current price (V5.1 - removed config param)
 		updated, err := UpdateTracker(ctx, m.storage, tracker, currentPrice)
 		if err != nil {
@@ -867,8 +875,14 @@ func (m *Manager) processDynamicSL(ctx context.Context, positions []*models.Posi
 				tracker.CurrentSlPrice, tracker.Leverage, priceProfitPct*100, accountProfitPct*100, tracker.BreakevenReached, currentPhase)
 		}
 
-		// Check SL adjustment (V5.1 - returns phase)
-		shouldAdjust, newSlPrice, phase, err := ShouldAdjustSL(tracker, currentPrice, m.dynamicSLConfig)
+		// Check SL adjustment using prevExtremePrice so Phase B compares against previous cycle's high
+		// 使用上个周期的极值进行Phase B判断，避免"刚更新最高价就比较"导致永远不触发
+		// Phase B: currentPrice > prevExtreme + 0.5% → triggers trailing move
+		shouldAdjust, newSlPrice, phase, err := CalculateDynamicSL(
+			tracker.EntryPrice, currentPrice, prevExtremePrice,
+			tracker.CurrentSlPrice, tracker.InitialSlPrice, tracker.Leverage,
+			tracker.BreakevenReached, isLong, m.dynamicSLConfig,
+		)
 		if err != nil {
 			m.logger.Error("Failed to check SL adjustment for position %s: %v", position.Instrument, err)
 			continue
@@ -920,7 +934,13 @@ func (m *Manager) findStopLossOrders(position *models.Position, algoOrders []okx
 	var slOrders []okx.AlgoOrder
 
 	for _, order := range algoOrders {
-		if m.matchesPosition(&order, position) && order.SlTriggerPx != "" && order.SlTriggerPx != "0" {
+		if !m.matchesPosition(&order, position) {
+			continue
+		}
+		// Parse SL trigger price numerically to handle "0", "0.00000000", "" etc.
+		// 数值解析SL触发价格，避免字符串比较漏掉"0.00000000"等格式 / Parse numerically to avoid string format issues
+		slPx, err := strconv.ParseFloat(order.SlTriggerPx, 64)
+		if err == nil && slPx > 0 {
 			slOrders = append(slOrders, order)
 		}
 	}

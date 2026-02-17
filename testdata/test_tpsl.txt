@@ -1,0 +1,10 @@
+# Test scenario: TPSL trigger
+# Entry at 100, TP at 110, SL at 95
+# Price rises to trigger TP
+100
+101
+102
+105
+108
+110
+112

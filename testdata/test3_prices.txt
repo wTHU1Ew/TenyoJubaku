@@ -1,0 +1,10 @@
+# Test 3: 爆仓测试
+# Entry=100, Leverage=10x, Liquidation price=91
+# 设置TP=120但价格会跌破爆仓价
+100
+98
+95
+93
+91
+89
+87

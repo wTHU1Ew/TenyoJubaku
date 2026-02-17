@@ -1,0 +1,21 @@
+# Test 3 (Short): 1% auto SL, price drops to 98, then rises
+# Entry: 100, Initial SL: 101 (1% above, short)
+# Phase A trigger: price drops 1% to 99 (account profit 10% with 10x)
+# After Phase A: SL moves to breakeven=99.9
+# Phase B trigger: 0.5% price drop below lowest
+# Then price rises 0.25/step until SL triggers
+100
+100
+100
+99
+98
+98
+98.25
+98.5
+98.75
+99.0
+99.25
+99.5
+99.75
+100.0
+100.25
